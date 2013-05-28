@@ -16,31 +16,29 @@
 
 package org.vertx.java.core.impl;
 
-import org.jboss.netty.channel.socket.nio.NioWorker;
+import io.netty.channel.EventLoop;
+import org.vertx.java.core.logging.Logger;
+import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.util.concurrent.Executor;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class EventLoopContext extends Context {
+public class EventLoopContext extends DefaultContext {
 
-  private final NioWorker worker;
+  private static final Logger log = LoggerFactory.getLogger(EventLoopContext.class);
 
-  public EventLoopContext(VertxInternal vertx, Executor bgExec, NioWorker worker) {
+  public EventLoopContext(VertxInternal vertx, Executor bgExec) {
     super(vertx, bgExec);
-    this.worker = worker;
   }
 
   public void execute(Runnable task) {
-    worker.executeInIoThread(wrapTask(task), true);
+    getEventLoop().execute(wrapTask(task));
   }
 
-  public NioWorker getWorker() {
-    return worker;
+  public boolean isOnCorrectWorker(EventLoop worker) {
+    return getEventLoop() == worker;
   }
 
-  public boolean isOnCorrectWorker(NioWorker worker) {
-    return this.worker == worker;
-  }
 }

@@ -17,8 +17,9 @@ package vertx.tests.core.net;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.net.NetClient;
 import org.vertx.java.core.net.NetServer;
@@ -46,23 +47,30 @@ public class WorkerTestClient extends TestClientBase {
         p.start();
       }
     });
-    server.listen(1234);
-
-    final NetClient client = vertx.createNetClient();
-    client.connect(1234, new Handler<NetSocket>() {
-      public void handle(NetSocket socket) {
-        socket.dataHandler(new Handler<Buffer>() {
-          public void handle(Buffer data) {
-            server.close(new SimpleHandler() {
-              public void handle() {
-                client.close();
-                tu.testComplete();
-              }
-            });
-
-          }
-        });
-        socket.write("foo");
+    server.listen(1234, new AsyncResultHandler<NetServer>() {
+      @Override
+      public void handle(AsyncResult<NetServer> ar) {
+        if (ar.succeeded()) {
+          final NetClient client = vertx.createNetClient();
+          client.connect(1234, new AsyncResultHandler<NetSocket>() {
+            public void handle(AsyncResult<NetSocket> result) {
+              NetSocket socket = result.result();
+              socket.dataHandler(new Handler<Buffer>() {
+                public void handle(Buffer data) {
+                  server.close(new AsyncResultHandler<Void>() {
+                    public void handle(AsyncResult<Void> res) {
+                      client.close();
+                      tu.testComplete();
+                    }
+                  });
+                }
+              });
+              socket.write("foo");
+            }
+          });
+        } else {
+          ar.cause().printStackTrace();
+        }
       }
     });
   }

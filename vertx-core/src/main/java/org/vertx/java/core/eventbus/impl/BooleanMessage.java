@@ -16,18 +16,13 @@
 
 package org.vertx.java.core.eventbus.impl;
 
-import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 class BooleanMessage extends BaseMessage<Boolean> {
-
-  private static final Logger log = LoggerFactory.getLogger(BooleanMessage.class);
 
   BooleanMessage(boolean send, String address, Boolean body) {
     super(send, address, body);
@@ -37,13 +32,15 @@ class BooleanMessage extends BaseMessage<Boolean> {
     super(readBuff);
   }
 
+  @Override
   protected void readBody(int pos, Buffer readBuff) {
     boolean isNull = readBuff.getByte(pos) == (byte)0;
     if (!isNull) {
-      body = new Boolean(readBuff.getByte(pos + 1) == (byte)1);
+      body = readBuff.getByte(pos + 1) == (byte)1;
     }
   }
 
+  @Override
   protected void writeBody(Buffer buff) {
     if (body == null) {
       buff.appendByte((byte)0);
@@ -53,25 +50,20 @@ class BooleanMessage extends BaseMessage<Boolean> {
     }
   }
 
+  @Override
   protected int getBodyLength() {
     return 1 + (body == null ? 0 : 1);
   }
 
-  protected Message copy() {
+  @Override
+  protected Message<Boolean> copy() {
     // No need to copy since everything is immutable
     return this;
   }
 
+  @Override
   protected byte type() {
     return MessageFactory.TYPE_BOOLEAN;
-  }
-
-  protected void handleReply(Boolean reply, Handler<Message<Boolean>> replyHandler) {
-    bus.send(replyAddress, reply, replyHandler);
-  }
-
-  protected BaseMessage createReplyMessage(Boolean reply) {
-    return new BooleanMessage(true, replyAddress, reply);
   }
 
 }

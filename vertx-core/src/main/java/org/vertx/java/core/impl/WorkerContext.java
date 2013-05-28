@@ -16,14 +16,14 @@
 
 package org.vertx.java.core.impl;
 
-import org.jboss.netty.channel.socket.nio.NioWorker;
+import io.netty.channel.EventLoop;
 
 import java.util.concurrent.Executor;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class WorkerContext extends Context {
+public class WorkerContext extends DefaultContext {
 
   public WorkerContext(VertxInternal vertx, Executor orderedBgExec) {
     super(vertx, orderedBgExec);
@@ -33,7 +33,7 @@ public class WorkerContext extends Context {
     executeOnOrderedWorkerExec(wrapTask(task));
   }
 
-  public boolean isOnCorrectWorker(NioWorker worker) {
+  public boolean isOnCorrectWorker(EventLoop worker) {
     return false;
   }
 }

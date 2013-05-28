@@ -16,7 +16,7 @@
 
 package org.vertx.java.core.json;
 
-import org.vertx.java.core.http.impl.ws.Base64;
+import org.vertx.java.core.json.impl.Base64;
 import org.vertx.java.core.json.impl.Json;
 
 import java.util.LinkedHashMap;
@@ -56,9 +56,8 @@ public class JsonObject extends JsonElement {
    * @param jsonString
    *          The string form of a JSON object
    */
-  @SuppressWarnings("unchecked")
   public JsonObject(String jsonString) {
-    map = (Map<String, Object>) Json.decodeValue(jsonString, Map.class);
+    map = Json.decodeValue(jsonString, Map.class);
   }
 
   public JsonObject putString(String fieldName, String value) {
@@ -99,6 +98,17 @@ public class JsonObject extends JsonElement {
     return this;
   }
 
+  public JsonObject putValue(String fieldName, Object value) {
+    if (value instanceof JsonObject) {
+      putObject(fieldName, (JsonObject)value);
+    } else if (value instanceof JsonArray) {
+      putArray(fieldName, (JsonArray)value);
+    } else {
+      map.put(fieldName, value);
+    }
+    return this;
+  }
+
   public String getString(String fieldName) {
     return (String) map.get(fieldName);
   }
@@ -118,10 +128,10 @@ public class JsonObject extends JsonElement {
   public JsonElement getElement(String fieldName) {
     Object element = map.get(fieldName);
     if (element instanceof Map<?,?>){
-      return this.getObject(fieldName);
+      return getObject(fieldName);
     }
     if (element instanceof List<?>){
-      return this.getArray(fieldName);
+      return getArray(fieldName);
     }
     throw new ClassCastException();
   }
@@ -179,6 +189,16 @@ public class JsonObject extends JsonElement {
     return n == null ? def : n;
   }
 
+  public Long getLong(String fieldName, long def) {
+    Number num = (Number) map.get(fieldName);
+    return num == null ? def : num.longValue();
+  }
+
+  public Integer getInteger(String fieldName, int def) {
+    Number num = (Number) map.get(fieldName);
+    return num == null ? def : num.intValue();
+  }
+
   public byte[] getBinary(String fieldName, byte[] def) {
     byte[] b = getBinary(fieldName);
     return b == null ? def : b;
@@ -189,15 +209,27 @@ public class JsonObject extends JsonElement {
   }
 
   @SuppressWarnings("unchecked")
-  public Object getField(String fieldName) {
+  public <T> T getValue(String fieldName) {
+    Object obj = map.get(fieldName);
+    if (obj != null) {
+      if (obj instanceof Map) {
+        obj = new JsonObject((Map)obj);
+      } else if (obj instanceof List) {
+        obj = new JsonArray((List)obj);
+      }
+    }
+    return (T)obj;
+  }
+
+  @SuppressWarnings("unchecked")
+  public <T> T getField(String fieldName) {
     Object obj = map.get(fieldName);
     if (obj instanceof Map) {
-      return new JsonObject((Map<String, Object>) obj);
+      obj = new JsonObject((Map)obj);
     } else if (obj instanceof List) {
-      return new JsonArray((List<Object>) obj);
-    } else {
-      return obj;
+      obj = new JsonArray((List)obj);
     }
+    return (T)obj;
   }
 
   public Object removeField(String fieldName) {

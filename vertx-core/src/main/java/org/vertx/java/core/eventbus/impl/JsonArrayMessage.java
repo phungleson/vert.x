@@ -16,19 +16,15 @@
 
 package org.vertx.java.core.eventbus.impl;
 
-import org.jboss.netty.util.CharsetUtil;
+import io.netty.util.CharsetUtil;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.json.JsonArray;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 class JsonArrayMessage extends BaseMessage<JsonArray> {
-
-  private static final Logger log = LoggerFactory.getLogger(JsonArrayMessage.class);
 
   private byte[] encoded;
 
@@ -47,6 +43,7 @@ class JsonArrayMessage extends BaseMessage<JsonArray> {
     super(readBuff);
   }
 
+  @Override
   protected void readBody(int pos, Buffer readBuff) {
     boolean isNull = readBuff.getByte(pos) == (byte)0;
     if (!isNull) {
@@ -59,6 +56,7 @@ class JsonArrayMessage extends BaseMessage<JsonArray> {
     }
   }
 
+  @Override
   protected void writeBody(Buffer buff) {
     if (body == null) {
       buff.appendByte((byte)0);
@@ -69,6 +67,7 @@ class JsonArrayMessage extends BaseMessage<JsonArray> {
     }
   }
 
+  @Override
   protected int getBodyLength() {
     if (body == null) {
       return 1;
@@ -79,16 +78,14 @@ class JsonArrayMessage extends BaseMessage<JsonArray> {
     }
   }
 
-  protected Message copy() {
+  @Override
+  protected Message<JsonArray> copy() {
     return new JsonArrayMessage(this);
   }
 
+  @Override
   protected byte type() {
     return MessageFactory.TYPE_JSON;
-  }
-
-  protected BaseMessage createReplyMessage(JsonArray reply) {
-    return new JsonArrayMessage(true, replyAddress, reply);
   }
 
 }

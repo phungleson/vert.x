@@ -16,8 +16,9 @@
 
 package vertx.tests.core.http;
 
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.*;
 import org.vertx.java.testframework.TestClientBase;
@@ -62,6 +63,10 @@ public class RouteMatcherTestClient extends TestClientBase {
   }
 
   public void testRouteWithPattern6GET() {
+    testRouteWithPattern6("GET");
+  }
+
+  public void testRouteWithPattern7GET() {
     testRouteWithPattern6("GET");
   }
 
@@ -176,6 +181,12 @@ public class RouteMatcherTestClient extends TestClientBase {
     testRoute(false, "/:name/", params, method, "/foo/");
   }
 
+  private void testRouteWithPattern7(String method)  {
+    Map<String, String> params = new HashMap<>();
+    params.put("my_name", "foo");
+    testRoute(false, "/:my_name/", params, method, "/foo/");
+  }
+
   private void testRouteWithRegex(String method) {
     Map<String, String> params = new HashMap<>();
     params.put("param0", "foo");
@@ -221,7 +232,7 @@ public class RouteMatcherTestClient extends TestClientBase {
         for (Map.Entry<String, String> entry : params.entrySet()) {
           assert (entry.getValue().equals(req.params().get(entry.getKey())));
         }
-        req.response.end();
+        req.response().end();
       }
     };
 
@@ -296,78 +307,82 @@ public class RouteMatcherTestClient extends TestClientBase {
     if (noMatchHandler) {
       matcher.noMatch(new Handler<HttpServerRequest>() {
         public void handle(HttpServerRequest req) {
-          req.response.end(noMatchResponseBody);
+          req.response().end(noMatchResponseBody);
         }
       });
     }
 
     final HttpServer server = vertx.createHttpServer();
     server.requestHandler(matcher);
-    server.listen(8080, "localhost");
+    server.listen(8080, "localhost", new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+        final HttpClient client = vertx.createHttpClient().setPort(8080).setHost("localhost");
 
-    final HttpClient client = vertx.createHttpClient().setPort(8080).setHost("localhost");
-
-    Handler<HttpClientResponse> respHandler = new Handler<HttpClientResponse>() {
-      public void handle(HttpClientResponse resp) {
-        if (shouldPass) {
-          tu.azzert(200 == resp.statusCode);
-          closeClientAndServer(client, server);
-        } else if (noMatchHandler) {
-          tu.azzert(200 == resp.statusCode);
-          resp.bodyHandler(new Handler<Buffer>() {
-            public void handle(Buffer body) {
-              tu.azzert(noMatchResponseBody.equals(body.toString()));
+        Handler<HttpClientResponse> respHandler = new Handler<HttpClientResponse>() {
+          public void handle(HttpClientResponse resp) {
+            if (shouldPass) {
+              tu.azzert(200 == resp.statusCode());
+              closeClientAndServer(client, server);
+            } else if (noMatchHandler) {
+              tu.azzert(200 == resp.statusCode());
+              resp.bodyHandler(new Handler<Buffer>() {
+                public void handle(Buffer body) {
+                  tu.azzert(noMatchResponseBody.equals(body.toString()));
+                  closeClientAndServer(client, server);
+                }
+              });
+            } else {
+              tu.azzert(404 == resp.statusCode());
               closeClientAndServer(client, server);
             }
-          });
-        } else {
-          tu.azzert(404 == resp.statusCode);
-          closeClientAndServer(client, server);
+          }
+        };
+
+        final HttpClientRequest req;
+
+        switch (method) {
+          case "GET":
+            req = client.get(uri, respHandler);
+            break;
+          case "PUT":
+            req = client.put(uri, respHandler);
+            break;
+          case "POST":
+            req = client.post(uri, respHandler);
+            break;
+          case "DELETE":
+            req = client.delete(uri, respHandler);
+            break;
+          case "OPTIONS":
+            req = client.options(uri, respHandler);
+            break;
+          case "HEAD":
+            req = client.head(uri, respHandler);
+            break;
+          case "TRACE":
+            req = client.trace(uri, respHandler);
+            break;
+          case "PATCH":
+            req = client.patch(uri, respHandler);
+            break;
+          case "CONNECT":
+            req = client.connect(uri, respHandler);
+            break;
+          default:
+            throw new IllegalArgumentException("Invalid method:" + method);
         }
+
+        req.end();
       }
-    };
-
-    final HttpClientRequest req;
-
-    switch (method) {
-      case "GET":
-        req = client.get(uri, respHandler);
-        break;
-      case "PUT":
-        req = client.put(uri, respHandler);
-        break;
-      case "POST":
-        req = client.post(uri, respHandler);
-        break;
-      case "DELETE":
-        req = client.delete(uri, respHandler);
-        break;
-      case "OPTIONS":
-        req = client.options(uri, respHandler);
-        break;
-      case "HEAD":
-        req = client.head(uri, respHandler);
-        break;
-      case "TRACE":
-        req = client.trace(uri, respHandler);
-        break;
-      case "PATCH":
-        req = client.patch(uri, respHandler);
-        break;
-      case "CONNECT":
-        req = client.connect(uri, respHandler);
-        break;
-      default:
-        throw new IllegalArgumentException("Invalid method:" + method);
-    }
-
-    req.end();
+    });
   }
 
   private void closeClientAndServer(HttpClient client, HttpServer server) {
     client.close();
-    server.close(new SimpleHandler() {
-      public void handle() {
+    server.close(new AsyncResultHandler<Void>() {
+      public void handle(AsyncResult<Void> result) {
         tu.testComplete();
       }
     });

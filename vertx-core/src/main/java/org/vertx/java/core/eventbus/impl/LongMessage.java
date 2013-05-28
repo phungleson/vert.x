@@ -18,15 +18,11 @@ package org.vertx.java.core.eventbus.impl;
 
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 class LongMessage extends BaseMessage<Long> {
-
-  private static final Logger log = LoggerFactory.getLogger(LongMessage.class);
 
   LongMessage(boolean send, String address, Long body) {
     super(send, address, body);
@@ -36,6 +32,7 @@ class LongMessage extends BaseMessage<Long> {
     super(readBuff);
   }
 
+  @Override
   protected void readBody(int pos, Buffer readBuff) {
     boolean isNull = readBuff.getByte(pos) == (byte)0;
     if (!isNull) {
@@ -43,6 +40,7 @@ class LongMessage extends BaseMessage<Long> {
     }
   }
 
+  @Override
   protected void writeBody(Buffer buff) {
     if (body == null) {
       buff.appendByte((byte)0);
@@ -52,21 +50,20 @@ class LongMessage extends BaseMessage<Long> {
     }
   }
 
+  @Override
   protected int getBodyLength() {
     return 1 + (body == null ? 0 : 8);
   }
 
-  protected Message copy() {
+  @Override
+  protected Message<Long> copy() {
     // No need to copy since everything is immutable
     return this;
   }
 
+  @Override
   protected byte type() {
     return MessageFactory.TYPE_LONG;
-  }
-
-  protected BaseMessage createReplyMessage(Long reply) {
-    return new LongMessage(true, replyAddress, reply);
   }
 
 }

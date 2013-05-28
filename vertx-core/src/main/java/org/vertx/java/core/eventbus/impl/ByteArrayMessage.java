@@ -18,15 +18,11 @@ package org.vertx.java.core.eventbus.impl;
 
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 class ByteArrayMessage extends BaseMessage<byte[]> {
-
-  private static final Logger log = LoggerFactory.getLogger(ByteArrayMessage.class);
 
   ByteArrayMessage(boolean send, String address, byte[] body) {
     super(send, address, body);
@@ -36,6 +32,7 @@ class ByteArrayMessage extends BaseMessage<byte[]> {
     super(readBuff);
   }
 
+  @Override
   protected void readBody(int pos, Buffer readBuff) {
     boolean isNull = readBuff.getByte(pos) == (byte)0;
     if (!isNull) {
@@ -46,6 +43,7 @@ class ByteArrayMessage extends BaseMessage<byte[]> {
     }
   }
 
+  @Override
   protected void writeBody(Buffer buff) {
     if (body == null) {
       buff.appendByte((byte)0);
@@ -56,11 +54,13 @@ class ByteArrayMessage extends BaseMessage<byte[]> {
     }
   }
 
+  @Override
   protected int getBodyLength() {
     return body == null ? 1 : 1 + 4 + body.length;
   }
 
-  protected Message copy() {
+  @Override
+  protected Message<byte[]> copy() {
     byte[] bod;
     if (body != null) {
       bod = new byte[body.length];
@@ -75,12 +75,9 @@ class ByteArrayMessage extends BaseMessage<byte[]> {
     return copied;
   }
 
+  @Override
   protected byte type() {
     return MessageFactory.TYPE_BYTEARRAY;
-  }
-
-  protected BaseMessage createReplyMessage(byte[] reply) {
-    return new ByteArrayMessage(true, replyAddress, reply);
   }
 
 }

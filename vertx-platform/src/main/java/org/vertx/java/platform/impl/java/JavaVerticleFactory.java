@@ -28,17 +28,17 @@ import org.vertx.java.platform.VerticleFactory;
 public class JavaVerticleFactory implements VerticleFactory {
 
   private ClassLoader cl;
-
-  public JavaVerticleFactory() {
-	  super();
-  }
+  private Vertx vertx;
+  private Container container;
 
   @Override
   public void init(Vertx vertx, Container container, ClassLoader cl) {
     this.cl = cl;
+    this.vertx = vertx;
+    this.container = container;
   }
 
-  private boolean isJavaSource(String main) {
+  private static boolean isJavaSource(String main) {
     return main.endsWith(".java");
   }
 
@@ -54,11 +54,14 @@ public class JavaVerticleFactory implements VerticleFactory {
     } else {
       clazz = cl.loadClass(className);
     }
-    return (Verticle)clazz.newInstance();
+    Verticle verticle = (Verticle)clazz.newInstance();
+    verticle.setVertx(vertx);
+    verticle.setContainer(container);
+    return verticle;
   }
     
   public void reportException(Logger logger, Throwable t) {
-    logger.error("Exception in Java verticle script", t);
+    logger.error("Exception in Java verticle", t);
   }
 
   public void close() {

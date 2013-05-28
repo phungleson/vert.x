@@ -18,7 +18,8 @@ package vertx.tests;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 
-import org.vertx.java.core.Handler;
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.testframework.TestClientBase;
 
 public class RepoDownloadTestClient extends TestClientBase {
@@ -30,22 +31,22 @@ public class RepoDownloadTestClient extends TestClientBase {
   }
 
   public void testMavenDownload() {
-    container.deployModule("mod-maven-server", new Handler<String>() {
-      public void handle(String deployID) {
-        if (deployID != null) {
-          container.deployModule("maven:io.vertx:mod-maven-test:1.0.0");
+    container.deployModule("io.vertx~mod-maven-server~1.0", new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        if (res.succeeded()) {
+          container.deployModule("io.vertx~mod-maven-test~1.0.0");
         }
       }
     });
   }
 
   public void testMavenDownloadWithProxy() {
-    container.deployModule("mod-proxy-maven-server", new Handler<String>() {
-      public void handle(String deployID) {
-        if (deployID != null) {
-          container.deployModule("maven:io.vertx:mod-maven-test:1.0.0", new Handler<String>() {
+    container.deployModule("io.vertx~mod-proxy-maven-server~1.0", new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        if (res.succeeded()) {
+          container.deployModule("io.vertx~mod-maven-test~1.0.0", new AsyncResultHandler<String>() {
             @Override
-            public void handle(String event) {
+            public void handle(AsyncResult<String> res) {
             }
           });
         }
@@ -54,10 +55,10 @@ public class RepoDownloadTestClient extends TestClientBase {
   }
 
   public void testBintrayDownload() {
-    container.deployModule("mod-bintray-server", new Handler<String>() {
-      public void handle(String deployID) {
-        if (deployID != null) {
-          container.deployModule("bintray:purplefox:vertx-mods:mod-bintray-test:1.0.0");
+    container.deployModule("io.vertx~mod-bintray-server~1.0", new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        if (res.succeeded()) {
+          container.deployModule("purplefox~mod-bintray-test~1.0.0");
         }
       }
     });

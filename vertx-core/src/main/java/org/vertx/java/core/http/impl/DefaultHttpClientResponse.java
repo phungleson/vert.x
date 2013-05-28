@@ -16,103 +16,202 @@
 
 package org.vertx.java.core.http.impl;
 
-import org.jboss.netty.handler.codec.http.HttpChunkTrailer;
-import org.jboss.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.DefaultHttpHeaders;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.LastHttpContent;
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.Vertx;
+import org.vertx.java.core.VoidHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.HttpClientResponse;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
+import org.vertx.java.core.MultiMap;
+import org.vertx.java.core.net.NetSocket;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
+import java.util.Queue;
 
 /**
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class DefaultHttpClientResponse extends HttpClientResponse {
+public class DefaultHttpClientResponse implements HttpClientResponse  {
 
-  private static final Logger log = LoggerFactory.getLogger(DefaultHttpClientResponse.class);
-
+  private final int statusCode;
+  private final String statusMessage;
+  private final DefaultHttpClientRequest request;
+  private final Vertx vertx;
   private final ClientConnection conn;
+
   private Handler<Buffer> dataHandler;
   private Handler<Void> endHandler;
-  private Handler<Exception> exceptionHandler;
+  private Handler<Throwable> exceptionHandler;
   private final HttpResponse response;
-  private HttpChunkTrailer trailer;
+  private LastHttpContent trailer;
+  private boolean paused;
+  private Queue<Buffer> pausedChunks;
+  private boolean hasPausedEnd;
+  private LastHttpContent pausedTrailer;
+  private NetSocket netSocket;
+
   // Cache these for performance
-  private Map<String, String> headers;
-  private Map<String, String> trailers;
+  private MultiMap headers;
+  private MultiMap trailers;
   private List<String> cookies;
 
-  DefaultHttpClientResponse(ClientConnection conn, HttpResponse response) {
-    super(response.getStatus().getCode(), response.getStatus().getReasonPhrase());
+  DefaultHttpClientResponse(Vertx vertx, DefaultHttpClientRequest request, ClientConnection conn, HttpResponse response) {
+    this.vertx = vertx;
+    this.statusCode = response.getStatus().code();
+    this.statusMessage = response.getStatus().reasonPhrase();
+    this.request = request;
     this.conn = conn;
     this.response = response;
   }
 
-  public Map<String, String> headers() {
+  @Override
+  public int statusCode() {
+    return statusCode;
+  }
+
+  @Override
+  public String statusMessage() {
+    return statusMessage;
+  }
+
+  @Override
+  public MultiMap headers() {
     if (headers == null) {
-      headers = HeaderUtils.simplifyHeaders(response.getHeaders());
+      headers = new HttpHeadersAdapter(response.headers());
     }
     return headers;
   }
 
-  public Map<String, String> trailers() {
+  @Override
+  public MultiMap trailers() {
     if (trailers == null) {
-      if (trailer == null) {
-        trailers = new HashMap<>();
-      } else {
-        trailers = HeaderUtils.simplifyHeaders(trailer.getHeaders());
-      }
+      trailers = new HttpHeadersAdapter(new DefaultHttpHeaders());
     }
     return trailers;
   }
 
+  @Override
   public List<String> cookies() {
     if (cookies == null) {
       cookies = new ArrayList<>();
-      cookies.addAll(response.getHeaders("Set-Cookie"));
+      cookies.addAll(response.headers().getAll("Set-Cookie"));
       if (trailer != null) {
-        cookies.addAll(trailer.getHeaders("Set-Cookie"));
+        cookies.addAll(trailer.trailingHeaders().getAll("Set-Cookie"));
       }
     }
     return cookies;
   }
 
-  public void dataHandler(Handler<Buffer> dataHandler) {
+  @Override
+  public HttpClientResponse dataHandler(Handler<Buffer> dataHandler) {
     this.dataHandler = dataHandler;
+    return this;
   }
 
-  public void endHandler(Handler<Void> endHandler) {
+  @Override
+  public HttpClientResponse endHandler(Handler<Void> endHandler) {
     this.endHandler = endHandler;
+    return this;
   }
 
-  public void exceptionHandler(Handler<Exception> exceptionHandler) {
+  @Override
+  public HttpClientResponse exceptionHandler(Handler<Throwable> exceptionHandler) {
     this.exceptionHandler = exceptionHandler;
+    return this;
   }
 
-  public void pause() {
-    conn.pause();
+  @Override
+  public HttpClientResponse pause() {
+    paused = true;
+    conn.doPause();
+    return this;
   }
 
-  public void resume() {
-    conn.resume();
+  @Override
+  public HttpClientResponse resume() {
+    paused = false;
+    doResume();
+    conn.doResume();
+    return this;
   }
 
-  void handleChunk(Buffer data) {
-    if (dataHandler != null) {
-      dataHandler.handle(data);
+  @Override
+  public HttpClientResponse bodyHandler(final Handler<Buffer> bodyHandler) {
+    final Buffer body = new Buffer();
+    dataHandler(new Handler<Buffer>() {
+      public void handle(Buffer buff) {
+        body.appendBuffer(buff);
+      }
+    });
+    endHandler(new VoidHandler() {
+      public void handle() {
+        bodyHandler.handle(body);
+      }
+    });
+    return this;
+  }
+
+  private void doResume() {
+    if (pausedChunks != null) {
+      Buffer chunk;
+      while ((chunk = pausedChunks.poll()) != null) {
+        final Buffer theChunk = chunk;
+        vertx.runOnContext(new VoidHandler() {
+          @Override
+          protected void handle() {
+            handleChunk(theChunk);
+            // release the buffer after process it
+            theChunk.getByteBuf().release();
+          }
+        });
+      }
+    }
+    if (hasPausedEnd) {
+      final LastHttpContent theTrailer = pausedTrailer;
+      vertx.runOnContext(new VoidHandler() {
+        @Override
+        protected void handle() {
+          handleEnd(theTrailer);
+          // release the buffer after process it
+          theTrailer.release();
+        }
+      });
+      hasPausedEnd = false;
+      pausedTrailer = null;
     }
   }
 
-  void handleEnd(HttpChunkTrailer trailer) {
-    this.trailer = trailer;
-    if (endHandler != null) {
-      endHandler.handle(null);
+  void handleChunk(Buffer data) {
+    if (paused) {
+      if (pausedChunks == null) {
+        pausedChunks = new LinkedList<>();
+      }
+      // retain here we will release once the paused chunks will get processed
+      data.getByteBuf().retain();
+      pausedChunks.add(data);
+    } else {
+      request.dataReceived();
+      if (dataHandler != null) {
+        dataHandler.handle(data);
+      }
+    }
+  }
+
+  void handleEnd(LastHttpContent trailer) {
+    if (paused) {
+      hasPausedEnd = true;
+      pausedTrailer = trailer.retain();
+    } else {
+      this.trailer = trailer;
+      trailers = new HttpHeadersAdapter(trailer.trailingHeaders());
+      if (endHandler != null) {
+        endHandler.handle(null);
+      }
     }
   }
 
@@ -122,4 +221,11 @@ public class DefaultHttpClientResponse extends HttpClientResponse {
     }
   }
 
+  @Override
+  public NetSocket netSocket() {
+    if (netSocket == null) {
+      netSocket = conn.createNetSocket();
+    }
+    return netSocket;
+  }
 }

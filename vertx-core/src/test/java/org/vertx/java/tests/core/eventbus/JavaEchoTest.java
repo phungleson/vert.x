@@ -35,6 +35,7 @@ public class JavaEchoTest extends TestBase {
   @Override
   protected void setUp() throws Exception {
     super.setUp();
+
     startApp(getPeerClassName());
     startApp(getClientClassName());
   }
@@ -56,10 +57,6 @@ public class JavaEchoTest extends TestBase {
     startTest(testName + "Initialise");
     startTest(testName);
   }
-
-//  public void testFoo() throws Exception {
-//    super.runTestInLoop("testEchoString", 100000);
-//  }
 
   @Test
   public void testEchoString() {

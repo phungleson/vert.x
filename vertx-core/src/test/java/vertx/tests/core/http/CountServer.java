@@ -16,8 +16,10 @@
 
 package vertx.tests.core.http;
 
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
+import org.vertx.java.core.Future;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
 import org.vertx.java.core.http.HttpServer;
 import org.vertx.java.core.http.HttpServerRequest;
 import org.vertx.java.platform.Verticle;
@@ -32,22 +34,30 @@ public class CountServer extends Verticle {
 
   private HttpServer server;
 
-  public void start() {
+  public void start(final Future<Void> startedResult) {
     tu = new TestUtils(vertx);
+
     server = vertx.createHttpServer().requestHandler(new Handler<HttpServerRequest>() {
       public void handle(final HttpServerRequest req) {
         tu.checkThread();
-        req.response.headers().put("count", req.headers().get("count"));
-        req.response.end();
+        String cnt = req.headers().get("count");
+        req.response().headers().set("count", cnt);
+        req.response().end();
       }
-    }).listen(8080);
-
-    tu.appReady();
+    });
+    server.listen(8080, new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+        tu.appReady();
+        startedResult.setResult(null);
+      }
+    });
   }
 
   public void stop() {
-    server.close(new SimpleHandler() {
-      public void handle() {
+    server.close(new AsyncResultHandler<Void>() {
+      public void handle(AsyncResult<Void> result) {
         tu.checkThread();
         tu.appStopped();
       }

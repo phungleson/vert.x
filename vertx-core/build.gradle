@@ -17,25 +17,21 @@
 apply from: "$rootDir/gradle/maven.gradle"
 
 dependencies {
-  compile "log4j:log4j:$log4jVersion"
-  compile "org.slf4j:slf4j-api:$slf4jVersion"
-  compile "org.codehaus.jackson:jackson-core-asl:$jacksonVersion"
-  compile "org.codehaus.jackson:jackson-mapper-asl:$jacksonVersion"
-  compile "com.hazelcast:hazelcast:$hazelcastVersion"
-  compile "io.netty:netty:$nettyVersion"
+
+	compile "log4j:log4j:$log4jVersion"
+	compile "org.slf4j:slf4j-api:$slf4jVersion"
+	compile "com.fasterxml.jackson.core:jackson-core:$jacksonCoreVersion"
+	compile "com.fasterxml.jackson.core:jackson-databind:$jacksonDatabindVersion"
+	compile "com.hazelcast:hazelcast:$hazelcastVersion"
+	compile "io.netty:netty-all:$nettyVersion"
+
+  testCompile project(":vertx-platform")
 }
 
 artifacts {
   platform jar
 }
 
-sourceSets {
-  test {
-    resources {
-      srcDirs "../src/dist/conf"
-    }
-  }
-}
 
 test {
   outputs.upToDateWhen { false }
@@ -49,14 +45,3 @@ test {
   testLogging { exceptionFormat "full" }
 }
 
-task collectDeps(type: Copy) {
-  destinationDir = file("build/deps")
-  into("compile") {
-    from configurations.compile
-    exclude "vertx-*.jar"
-  }
-  into("test") {
-    from configurations.testCompile
-    exclude "vertx-*.jar"
-  }
-}

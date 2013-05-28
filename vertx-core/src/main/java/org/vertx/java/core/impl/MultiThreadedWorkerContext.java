@@ -17,13 +17,11 @@ package org.vertx.java.core.impl;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 
-import org.jboss.netty.channel.socket.nio.NioWorker;
-
 import java.util.concurrent.Executor;
 
-public class MultiThreadedWorkerContext extends Context {
+public class MultiThreadedWorkerContext extends WorkerContext {
 
-  private Executor bgExec;
+  private final Executor bgExec;
 
   public MultiThreadedWorkerContext(VertxInternal vertx, Executor orderedBgExec, Executor bgExec) {
     super(vertx, orderedBgExec);
@@ -32,9 +30,5 @@ public class MultiThreadedWorkerContext extends Context {
 
   public void execute(Runnable task) {
     bgExec.execute(wrapTask(task));
-  }
-
-  public boolean isOnCorrectWorker(NioWorker worker) {
-    return false;
   }
 }

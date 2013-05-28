@@ -16,72 +16,101 @@
 
 package org.vertx.java.core.http.impl;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelFutureListener;
-import org.jboss.netty.handler.codec.http.*;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+
+import io.netty.handler.codec.http.*;
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.file.impl.PathAdjuster;
+import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.http.HttpServerResponse;
-import org.vertx.java.core.impl.LowerCaseKeyMap;
 import org.vertx.java.core.impl.VertxInternal;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.io.File;
-import java.util.Map;
 
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names;
+import static io.netty.handler.codec.http.HttpHeaders.Names;
 
 /**
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class DefaultHttpServerResponse extends HttpServerResponse {
+public class DefaultHttpServerResponse implements HttpServerResponse {
 
-  @SuppressWarnings("unused")
-	private static final Logger log = LoggerFactory.getLogger(DefaultHttpServerResponse.class);
-
+  private final VertxInternal vertx;
   private final ServerConnection conn;
   private final HttpResponse response;
   private final HttpVersion version;
   private final boolean keepAlive;
+
+  private int statusCode = 200;
+  private String statusMessage = "OK";
+
   private boolean headWritten;
   private boolean written;
   private Handler<Void> drainHandler;
-  private Handler<Exception> exceptionHandler;
+  private Handler<Throwable> exceptionHandler;
   private Handler<Void> closeHandler;
   private boolean chunked;
   private boolean closed;
   private ChannelFuture channelFuture;
-  private Map<String, Object> headers;
-  private Map<String, Object> trailers;
-  private final VertxInternal vertx;
+  private MultiMap headers;
+  private LastHttpContent trailing;
+  private MultiMap trailers;
 
-  DefaultHttpServerResponse(final VertxInternal vertx, ServerConnection conn, HttpVersion version, boolean keepAlive) {
+  DefaultHttpServerResponse(final VertxInternal vertx, ServerConnection conn, HttpRequest request) {
   	this.vertx = vertx;
   	this.conn = conn;
+    this.version = request.getProtocolVersion();
     this.response = new DefaultHttpResponse(version, HttpResponseStatus.OK);
-    this.version = version;
-    this.keepAlive = keepAlive;
+    this.keepAlive = version == HttpVersion.HTTP_1_1 ||
+        (version == HttpVersion.HTTP_1_0 && "Keep-Alive".equalsIgnoreCase(request.headers().get("Connection")));
   }
 
-  public Map<String, Object> headers() {
+  @Override
+  public MultiMap headers() {
     if (headers == null) {
-      headers = new LowerCaseKeyMap();
+      headers = new HttpHeadersAdapter(response.headers());
     }
     return headers;
   }
 
-  public Map<String, Object> trailers() {
+  @Override
+  public MultiMap trailers() {
     if (trailers == null) {
-      trailers = new LowerCaseKeyMap();
+      if (trailing == null) {
+        trailing = new DefaultLastHttpContent();
+      }
+      trailers = new HttpHeadersAdapter(trailing.trailingHeaders());
     }
     return trailers;
   }
 
+  @Override
+  public int getStatusCode() {
+    return statusCode;
+  }
+
+  @Override
+  public HttpServerResponse setStatusCode(int statusCode) {
+    this.statusCode = statusCode;
+    return this;
+  }
+
+  @Override
+  public String getStatusMessage() {
+    return statusMessage;
+  }
+
+  @Override
+  public HttpServerResponse setStatusMessage(String statusMessage) {
+    this.statusMessage = statusMessage;
+    return this;
+  }
+
+  @Override
   public DefaultHttpServerResponse setChunked(boolean chunked) {
     checkWritten();
     // HTTP 1.0 does not support chunking so we ignore this if HTTP 1.0
@@ -91,86 +120,203 @@ public class DefaultHttpServerResponse extends HttpServerResponse {
     return this;
   }
 
-  public DefaultHttpServerResponse putHeader(String key, Object value) {
+  @Override
+  public boolean isChunked() {
+    return chunked;
+  }
+
+  @Override
+  public DefaultHttpServerResponse putHeader(String key, String value) {
     checkWritten();
-    headers().put(key, value);
+    headers().set(key, value);
     return this;
   }
 
-  public DefaultHttpServerResponse putTrailer(String key, Object value) {
+  @Override
+  public DefaultHttpServerResponse putHeader(String key, Iterable<String> values) {
     checkWritten();
-    trailers().put(key, value);
+    headers().set(key, values);
     return this;
   }
 
-  public void setWriteQueueMaxSize(int size) {
+  @Override
+  public DefaultHttpServerResponse putTrailer(String key, String value) {
     checkWritten();
-    conn.setWriteQueueMaxSize(size);
+    trailers().set(key, value);
+    return this;
   }
 
+  @Override
+  public DefaultHttpServerResponse putTrailer(String key, Iterable<String> values) {
+    checkWritten();
+    trailers().set(key, values);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse setWriteQueueMaxSize(int size) {
+    checkWritten();
+    conn.doSetWriteQueueMaxSize(size);
+    return this;
+  }
+
+  @Override
   public boolean writeQueueFull() {
     checkWritten();
-    return conn.writeQueueFull();
+    return conn.doWriteQueueFull();
   }
 
-  public void drainHandler(Handler<Void> handler) {
+  @Override
+  public HttpServerResponse drainHandler(Handler<Void> handler) {
     checkWritten();
     this.drainHandler = handler;
     conn.handleInterestedOpsChanged(); //If the channel is already drained, we want to call it immediately
+    return this;
   }
 
-  public void exceptionHandler(Handler<Exception> handler) {
+  @Override
+  public HttpServerResponse exceptionHandler(Handler<Throwable> handler) {
     checkWritten();
     this.exceptionHandler = handler;
+    return this;
   }
 
-  public void closeHandler(Handler<Void> handler) {
+  @Override
+  public HttpServerResponse closeHandler(Handler<Void> handler) {
     checkWritten();
     this.closeHandler = handler;
+    return this;
   }
 
-  public void writeBuffer(Buffer chunk) {
-    write(chunk.getChannelBuffer(), null);
-  }
-
+  @Override
   public DefaultHttpServerResponse write(Buffer chunk) {
-    return write(chunk.getChannelBuffer(), null);
+    ByteBuf buf = chunk.getByteBuf();
+    if (chunk.isWrapper()) {
+      // call retain to make sure it is not released before the write completes
+      // the write will call buf.release() by it own
+      buf.retain();
+    }
+    return write(buf, null);
   }
 
+  @Override
   public DefaultHttpServerResponse write(String chunk, String enc) {
-    return write(new Buffer(chunk, enc).getChannelBuffer(), null);
+    return write(new Buffer(chunk, enc).getByteBuf(), null);
   }
 
+  @Override
   public DefaultHttpServerResponse write(String chunk) {
-    return write(new Buffer(chunk).getChannelBuffer(), null);
+    return write(new Buffer(chunk).getByteBuf(), null);
   }
 
-  public DefaultHttpServerResponse write(Buffer chunk, Handler<Void> doneHandler) {
-    return write(chunk.getChannelBuffer(), doneHandler);
-  }
-
-  public DefaultHttpServerResponse write(String chunk, String enc, Handler<Void> doneHandler) {
-    return write(new Buffer(chunk, enc).getChannelBuffer(), doneHandler);
-  }
-
-  public DefaultHttpServerResponse write(String chunk, Handler<Void> doneHandler) {
-    return write(new Buffer(chunk).getChannelBuffer(), doneHandler);
-  }
-
+  @Override
   public void end(String chunk) {
     end(new Buffer(chunk));
   }
 
+  @Override
   public void end(String chunk, String enc) {
     end(new Buffer(chunk, enc));
   }
 
+  @Override
   public void end(Buffer chunk) {
     if (!chunked && !contentLengthSet()) {
-      headers().put(Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
+      headers().set(Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
     }
     write(chunk);
     end();
+  }
+
+  @Override
+  public void close() {
+    if (!closed) {
+      if (headWritten) {
+        closeConnAfterWrite();
+      } else {
+        conn.close();
+      }
+      closed = true;
+    }
+  }
+
+  @Override
+  public void end() {
+    checkWritten();
+    writeHead();
+    if (trailing == null) {
+      channelFuture = conn.write(DefaultLastHttpContent.EMPTY_LAST_CONTENT);
+    } else {
+      channelFuture = conn.write(trailing);
+    }
+    if (!keepAlive) {
+      closeConnAfterWrite();
+    }
+    written = true;
+    conn.responseComplete();
+  }
+
+  @Override
+  public DefaultHttpServerResponse sendFile(String filename) {
+    return sendFile(filename, null);
+  }
+
+  @Override
+  public DefaultHttpServerResponse sendFile(String filename, String notFoundResource) {
+    if (headWritten) {
+      throw new IllegalStateException("Head already written");
+    }
+    checkWritten();
+    File file = new File(PathAdjuster.adjust(vertx, filename));
+    if (!file.exists()) {
+      if (notFoundResource != null) {
+        statusCode = HttpResponseStatus.NOT_FOUND.code();
+        sendFile(notFoundResource, null);
+      } else {
+        sendNotFound();
+      }
+    } else {
+      if (!contentLengthSet()) {
+        putHeader(Names.CONTENT_LENGTH, String.valueOf(file.length()));
+      }
+      if (!contentTypeSet()) {
+        int li = filename.lastIndexOf('.');
+        if (li != -1 && li != filename.length() - 1) {
+          String ext = filename.substring(li + 1, filename.length());
+          String contentType = MimeMapping.getMimeTypeForExtension(ext);
+          if (contentType != null) {
+            putHeader(Names.CONTENT_TYPE, contentType);
+          }
+        }
+      }
+      prepareHeaders();
+      conn.write(response);
+      conn.sendFile(file);
+
+      // write an empty last content to let the http encoder know the response is complete
+      channelFuture = conn.write(LastHttpContent.EMPTY_LAST_CONTENT);
+      headWritten = written = true;
+
+      if (!keepAlive) {
+        closeConnAfterWrite();
+      }
+      conn.responseComplete();
+    }
+    return this;
+  }
+
+  private boolean contentLengthSet() {
+    if (headers == null) {
+      return false;
+    }
+    return headers.contains(Names.CONTENT_LENGTH);
+  }
+
+  private boolean contentTypeSet() {
+    if (headers == null) {
+      return false;
+    }
+    return headers.contains(Names.CONTENT_TYPE);
   }
 
   private void closeConnAfterWrite() {
@@ -183,103 +329,9 @@ public class DefaultHttpServerResponse extends HttpServerResponse {
     }
   }
 
-  public void close() {
-    if (!closed) {
-      if (headWritten) {
-        closeConnAfterWrite();
-      } else {
-        conn.close();
-      }
-      closed = true;
-    }
-  }
-
-  public void end() {
-
-    checkWritten();
-    writeHead();
-    if (chunked) {
-      if (trailers == null) {
-        HttpChunk nettyChunk = new DefaultHttpChunk(ChannelBuffers.EMPTY_BUFFER);
-        channelFuture = conn.write(nettyChunk);
-      } else {
-        DefaultHttpChunkTrailer trlrs = new DefaultHttpChunkTrailer();
-        for (Map.Entry<String, Object> trailer: trailers.entrySet()) {
-          Object value = trailer.getValue();
-          if (value instanceof Iterable<?>) {
-            trlrs.setHeader(trailer.getKey(), (Iterable<?>) value);
-          } else {
-            trlrs.setHeader(trailer.getKey(), value);
-          }
-        }
-        channelFuture = conn.write(trlrs);
-      }
-    }
-
-    if (!keepAlive) {
-      closeConnAfterWrite();
-    }
-
-    written = true;
-    conn.responseComplete();
-  }
-
-  private boolean contentLengthSet() {
-    if (headers != null) {
-      return headers.containsKey(Names.CONTENT_LENGTH);
-    } else {
-      return false;
-    }
-  }
-
-  private boolean contentTypeSet() {
-    if (headers != null) {
-      return headers.containsKey(Names.CONTENT_TYPE);
-    } else {
-      return false;
-    }
-  }
-
-  public DefaultHttpServerResponse sendFile(String filename) {
-    if (headWritten) {
-      throw new IllegalStateException("Head already written");
-    }
-    checkWritten();
-    File file = new File(PathAdjuster.adjust(vertx, filename));
-    if (!file.exists()) {
-      sendNotFound();
-    } else {
-      writeHeaders();
-      if (!contentLengthSet()) {
-        response.setHeader(Names.CONTENT_LENGTH, String.valueOf(file.length()));
-      }
-      if (!contentTypeSet()) {
-        int li = filename.lastIndexOf('.');
-        if (li != -1 && li != filename.length() - 1) {
-          String ext = filename.substring(li + 1, filename.length());
-          String contentType = MimeMapping.getMimeTypeForExtension(ext);
-          if (contentType != null) {
-            response.setHeader(Names.CONTENT_TYPE, contentType);
-          }
-        }
-      }
-
-      conn.write(response);
-      channelFuture = conn.sendFile(file);
-      headWritten = written = true;
-      
-      if (!keepAlive) {
-        closeConnAfterWrite();
-      }
-      
-      conn.responseComplete();
-    }
-
-    return this;
-  }
-
   private void sendNotFound() {
-    statusCode = HttpResponseStatus.NOT_FOUND.getCode();
+    statusCode = HttpResponseStatus.NOT_FOUND.code();
+    putHeader("content-type", "text/html");
     end("<html><body>Resource not found</body><html>");
   }
 
@@ -309,49 +361,41 @@ public class DefaultHttpServerResponse extends HttpServerResponse {
 
   private void writeHead() {
     if (!headWritten) {
-      HttpResponseStatus status = statusMessage == null ? HttpResponseStatus.valueOf(statusCode) :
-          new HttpResponseStatus(statusCode, statusMessage);
-      response.setStatus(status);
-      if (version == HttpVersion.HTTP_1_0 && keepAlive) {
-        response.setHeader("Connection", "Keep-Alive");
-      }
-      writeHeaders();
-      if (chunked) {
-        response.setHeader(Names.TRANSFER_ENCODING, HttpHeaders.Values.CHUNKED);
-      } else if (version != HttpVersion.HTTP_1_0 && !contentLengthSet()) {
-        response.setHeader(Names.CONTENT_LENGTH, "0");
-      }
+      prepareHeaders();
       channelFuture = conn.write(response);
       headWritten = true;
     }
   }
 
-  private void writeHeaders() {
-    if (headers != null) {
-      for (Map.Entry<String, Object> header: headers.entrySet()) {
-        String key = header.getKey();
-        Object value = header.getValue();
-        if (value instanceof Iterable<?>) {
-          response.setHeader(key, (Iterable<?>) value);
-        } else {
-          response.setHeader(key, value);
-        }
-      }
+  private void prepareHeaders() {
+    HttpResponseStatus status = statusMessage == null ? HttpResponseStatus.valueOf(statusCode) :
+            new HttpResponseStatus(statusCode, statusMessage);
+    response.setStatus(status);
+    if (version == HttpVersion.HTTP_1_0 && keepAlive) {
+      response.headers().set("Connection", "Keep-Alive");
+    }
+    if (chunked) {
+      response.headers().set(Names.TRANSFER_ENCODING, io.netty.handler.codec.http.HttpHeaders.Values.CHUNKED);
+    } else if (version != HttpVersion.HTTP_1_0 && !contentLengthSet()) {
+      response.headers().set(Names.CONTENT_LENGTH, "0");
     }
   }
 
-  private DefaultHttpServerResponse write(ChannelBuffer chunk, final Handler<Void> doneHandler) {
+
+  private DefaultHttpServerResponse write(ByteBuf chunk, final Handler<AsyncResult<Void>> doneHandler) {
     checkWritten();
-    writeHead();
     if (version != HttpVersion.HTTP_1_0 && !chunked && !contentLengthSet()) {
       throw new IllegalStateException("You must set the Content-Length header to be the total size of the message "
-          + "body BEFORE sending any data if you are not using HTTP chunked encoding.");
+                                              + "body BEFORE sending any data if you are not using HTTP chunked encoding.");
     }
-    Object msg = chunked ? new DefaultHttpChunk(chunk) : chunk;
-    channelFuture = conn.write(msg);
-    if (doneHandler != null) {
-      conn.addFuture(doneHandler, channelFuture);
+    if (!headWritten) {
+      prepareHeaders();
+      conn.queueForWrite(response);
+      headWritten = true;
     }
+
+    channelFuture = conn.write(new DefaultHttpContent(chunk));
+    conn.addFuture(doneHandler, channelFuture);
     return this;
   }
 }

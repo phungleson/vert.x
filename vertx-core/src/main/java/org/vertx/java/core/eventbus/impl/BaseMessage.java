@@ -16,42 +16,181 @@
 
 package org.vertx.java.core.eventbus.impl;
 
-import org.jboss.netty.util.CharsetUtil;
+import io.netty.util.CharsetUtil;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
+import org.vertx.java.core.json.JsonArray;
+import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.net.NetSocket;
 import org.vertx.java.core.net.impl.ServerID;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public abstract class BaseMessage<T> extends Message<T> {
+public abstract class BaseMessage<U> implements Message<U> {
 
-  private static final Logger log = LoggerFactory.getLogger(BaseMessage.class);
-
+  protected U body;
   protected ServerID sender;
   protected DefaultEventBus bus;
   protected String address;
-  boolean send; // Is it a send or a publish?
+  protected String replyAddress;
+  protected boolean send; // Is it a send or a publish?
 
-  protected BaseMessage(boolean send, String address, T body) {
+  protected BaseMessage(boolean send, String address, U body) {
     this.send = send;
     this.body = body;
-    if (address == null) {
-      throw new IllegalArgumentException("address must be specified");
-    }
     this.address = address;
-    this.body = body;
   }
 
-  public void reply(T message, Handler<Message<T>> replyHandler) {
-    if (bus != null && replyAddress != null) {
-      BaseMessage<T> replyMessage = createReplyMessage(message);
-      bus.sendReply(sender, replyMessage, replyHandler);
-    }
+  @Override
+  public U body() {
+    return body;
+  }
+
+  @Override
+  public String replyAddress() {
+    return replyAddress;
+  }
+
+  @Override
+  public void reply() {
+    sendReply(DefaultEventBus.createMessage(true, replyAddress, null), null);
+  }
+
+  @Override
+  public void reply(Object message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(JsonObject message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(JsonArray message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(String message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Buffer message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(byte[] message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Integer message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Long message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Short message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Character message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Boolean message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Float message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(Double message) {
+    reply(message, null);
+  }
+
+  @Override
+  public <T> void reply(Handler<Message<T>> replyHandler) {
+    sendReply(DefaultEventBus.createMessage(true, replyAddress, null), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Object message, Handler<Message<T>> replyHandler) {
+    sendReply(DefaultEventBus.createMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(JsonObject message, Handler<Message<T>> replyHandler) {
+    sendReply(new JsonObjectMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(JsonArray message, Handler<Message<T>> replyHandler) {
+    sendReply(new JsonArrayMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(String message, Handler<Message<T>> replyHandler) {
+    sendReply(new StringMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Buffer message, Handler<Message<T>> replyHandler) {
+    sendReply(new BufferMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(byte[] message, Handler<Message<T>> replyHandler) {
+    sendReply(new ByteArrayMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Integer message, Handler<Message<T>> replyHandler) {
+    sendReply(new IntMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Long message, Handler<Message<T>> replyHandler) {
+    sendReply(new LongMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Short message, Handler<Message<T>> replyHandler) {
+    sendReply(new ShortMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Character message, Handler<Message<T>> replyHandler) {
+     sendReply(new CharacterMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Boolean message, Handler<Message<T>> replyHandler) {
+    sendReply(new BooleanMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Float message, Handler<Message<T>> replyHandler) {
+    sendReply(new FloatMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(Double message, Handler<Message<T>> replyHandler) {
+    sendReply(new DoubleMessage(true, replyAddress, message), replyHandler);
   }
 
   protected BaseMessage(Buffer readBuff) {
@@ -113,7 +252,7 @@ public abstract class BaseMessage<T> extends Message<T> {
 
   protected abstract byte type();
 
-  protected abstract Message<T> copy();
+  protected abstract Message<U> copy();
 
   protected abstract void readBody(int pos, Buffer readBuff);
 
@@ -121,6 +260,9 @@ public abstract class BaseMessage<T> extends Message<T> {
 
   protected abstract int getBodyLength();
 
-  protected abstract BaseMessage createReplyMessage(T reply);
-
+  private <T> void sendReply(BaseMessage msg, Handler<Message<T>> replyHandler) {
+    if (bus != null && replyAddress != null) {
+      bus.sendReply(sender, msg, replyHandler);
+    }
+  }
 }

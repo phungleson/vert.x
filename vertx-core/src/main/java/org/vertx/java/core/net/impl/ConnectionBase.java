@@ -16,22 +16,22 @@
 
 package org.vertx.java.core.net.impl;
 
-import org.jboss.netty.channel.*;
-import org.jboss.netty.channel.socket.nio.NioSocketChannelConfig;
-import org.jboss.netty.handler.ssl.SslHandler;
-import org.jboss.netty.handler.stream.ChunkedFile;
+import io.netty.channel.*;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.stream.ChunkedFile;
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
-import org.vertx.java.core.impl.Context;
+import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
+import org.vertx.java.core.impl.FlowControlHandler;
 import org.vertx.java.core.impl.VertxInternal;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
-import org.vertx.java.core.streams.ReadStream;
-import org.vertx.java.core.streams.WriteStream;
 
+import javax.net.ssl.SSLPeerUnverifiedException;
+import javax.security.cert.X509Certificate;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.net.InetSocketAddress;
 
 /**
  * Abstract base class for TCP connections.
@@ -40,9 +40,7 @@ import java.io.RandomAccessFile;
  */
 public abstract class ConnectionBase {
 
-  private static final Logger log = LoggerFactory.getLogger(ConnectionBase.class);
-
-  protected ConnectionBase(VertxInternal vertx, Channel channel, Context context) {
+  protected ConnectionBase(VertxInternal vertx, Channel channel, DefaultContext context) {
     this.vertx = vertx;
     this.channel = channel;
     this.context = context;
@@ -50,40 +48,11 @@ public abstract class ConnectionBase {
 
   protected final VertxInternal vertx;
   protected final Channel channel;
-  protected final Context context;
+  protected final DefaultContext context;
 
-  protected Handler<Exception> exceptionHandler;
-  protected Handler<Void> closedHandler;
-
-  /**
-   * Pause the connection, see {@link ReadStream#pause}
-   */
-  public void pause() {
-    channel.setReadable(false);
-  }
-
-  /**
-   * Resume the connection, see {@link ReadStream#resume}
-   */
-  public void resume() {
-    channel.setReadable(true);
-  }
-
-  /**
-   * Set the max size for the write queue, see {@link WriteStream#setWriteQueueMaxSize}
-   */
-  public void setWriteQueueMaxSize(int size) {
-    NioSocketChannelConfig conf = (NioSocketChannelConfig) channel.getConfig();
-    conf.setWriteBufferLowWaterMark(size / 2);
-    conf.setWriteBufferHighWaterMark(size);
-  }
-
-  /**
-   * Is the write queue full?, see {@link WriteStream#writeQueueFull}
-   */
-  public boolean writeQueueFull() {
-    return !channel.isWritable();
-  }
+  protected Handler<Throwable> exceptionHandler;
+  protected Handler<Void> closeHandler;
+  private volatile boolean writable = true;
 
   /**
    * Close the connection
@@ -92,66 +61,72 @@ public abstract class ConnectionBase {
     channel.close();
   }
 
-  /**
-   * Set an exception handler on the connection
-   */
-  public void exceptionHandler(Handler<Exception> handler) {
-    this.exceptionHandler = handler;
+  public void doPause() {
+    channel.config().setAutoRead(false);
   }
 
-  /**
-   * Set a closed handler on the connection
-   */
-  public void closedHandler(Handler<Void> handler) {
-    this.closedHandler = handler;
+  public void doResume() {
+    channel.config().setAutoRead(true);
   }
 
-  protected Context getContext() {
+  public void doSetWriteQueueMaxSize(int size) {
+    channel.pipeline().get(FlowControlHandler.class).setLimit(size / 2 , size);
+  }
+
+  public boolean doWriteQueueFull() {
+    return !writable;
+  }
+
+  protected void setWritable(boolean writable) {
+    this.writable = writable;
+  }
+
+  protected DefaultContext getContext() {
     return context;
   }
 
-  protected void handleException(Exception e) {
+  protected void handleException(Throwable t) {
     if (exceptionHandler != null) {
       setContext();
       try {
-        exceptionHandler.handle(e);
-      } catch (Throwable t) {
-        handleHandlerException(t);
+        exceptionHandler.handle(t);
+      } catch (Throwable t2) {
+        handleHandlerException(t2);
       }
     }
   }
 
   protected void handleClosed() {
-    if (closedHandler != null) {
+    if (closeHandler != null) {
       setContext();
       try {
-        closedHandler.handle(null);
+        closeHandler.handle(null);
       } catch (Throwable t) {
         handleHandlerException(t);
       }
     }
   }
 
-  protected void addFuture(final Handler<Void> doneHandler, final ChannelFuture future) {
-    future.addListener(new ChannelFutureListener() {
-      public void operationComplete(final ChannelFuture channelFuture) throws Exception {
-        setContext();
-        vertx.runOnLoop(new SimpleHandler() {
-          public void handle() {
-            if (channelFuture.isSuccess()) {
-              doneHandler.handle(null);
-            } else {
-              Throwable err = channelFuture.getCause();
-              if (exceptionHandler != null && err instanceof Exception) {
-                exceptionHandler.handle((Exception) err);
-              } else {
-                log.error("Unhandled exception", err);
+  protected void addFuture(final Handler<AsyncResult<Void>> doneHandler, final ChannelFuture future) {
+    if (future != null) {
+      future.addListener(new ChannelFutureListener() {
+        public void operationComplete(final ChannelFuture channelFuture) throws Exception {
+          if (doneHandler != null) {
+            context.execute(new Runnable() {
+              public void run() {
+                if (channelFuture.isSuccess()) {
+                  doneHandler.handle(new DefaultFutureResult<>((Void)null));
+                } else {
+                  doneHandler.handle(new DefaultFutureResult<Void>(channelFuture.cause()));
+                }
               }
-            }
+            });
+          } else if (!channelFuture.isSuccess()) {
+            vertx.reportException(channelFuture.cause());
           }
-        });
-      }
-    });
+        }
+      });
+    }
   }
 
   protected void setContext() {
@@ -163,7 +138,7 @@ public abstract class ConnectionBase {
   }
 
   protected boolean isSSL() {
-    return channel.getPipeline().get(SslHandler.class) != null;
+    return channel.pipeline().get(SslHandler.class) != null;
   }
 
   protected ChannelFuture sendFile(File file) {
@@ -194,4 +169,25 @@ public abstract class ConnectionBase {
       return null;
     }
   }
+
+  public X509Certificate[] getPeerCertificateChain() throws SSLPeerUnverifiedException {
+    if (isSSL()) {
+      final ChannelHandlerContext sslHandlerContext = channel.pipeline().context("ssl");
+      assert sslHandlerContext != null;
+      final SslHandler sslHandler = (SslHandler) sslHandlerContext.handler();
+      return sslHandler.engine().getSession().getPeerCertificateChain();
+    } else {
+      return null;
+    }
+  }
+
+  public InetSocketAddress remoteAddress() {
+    return (InetSocketAddress)channel.remoteAddress();
+  }
+
+  public InetSocketAddress localAddress() {
+    return (InetSocketAddress) channel.localAddress();
+  }
+
+  protected abstract void handleInterestedOpsChanged();
 }

@@ -16,8 +16,10 @@
 
 package vertx.tests.core.http;
 
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
+import org.vertx.java.core.Future;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
 import org.vertx.java.core.http.HttpServer;
 import org.vertx.java.core.http.HttpServerRequest;
 import org.vertx.java.platform.Verticle;
@@ -36,7 +38,7 @@ public class InstanceCheckServer extends Verticle {
 
   private final String id = UUID.randomUUID().toString();
 
-  public void start() {
+  public void start(final Future<Void> result) {
     tu = new TestUtils(vertx);
     server = vertx.createHttpServer().requestHandler(new Handler<HttpServerRequest>() {
       public void handle(final HttpServerRequest req) {
@@ -46,17 +48,26 @@ public class InstanceCheckServer extends Verticle {
         vertx.sharedData().getSet("instances").add(id);
         vertx.sharedData().getSet("requests").add(UUID.randomUUID().toString());
 
-        req.response.end();
+        req.response().end();
 
       }
-    }).listen(8080);
-
-    tu.appReady();
+    });
+    server.listen(8080, new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        if (ar.succeeded()) {
+          tu.appReady();
+          result.setResult(null);
+        } else {
+          ar.cause().printStackTrace();
+        }
+      }
+    });
   }
 
   public void stop() {
-    server.close(new SimpleHandler() {
-      public void handle() {
+    server.close(new AsyncResultHandler<Void>() {
+      public void handle(AsyncResult<Void> res) {
         tu.checkThread();
         tu.appStopped();
       }

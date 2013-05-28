@@ -16,12 +16,11 @@
 
 package org.vertx.java.core.http.impl;
 
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.vertx.java.core.impl.Context;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import org.vertx.java.core.Vertx;
+import org.vertx.java.core.impl.DefaultContext;
 import org.vertx.java.core.impl.VertxInternal;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.impl.ConnectionBase;
 
 /**
@@ -29,10 +28,23 @@ import org.vertx.java.core.net.impl.ConnectionBase;
  */
 public abstract class AbstractConnection extends ConnectionBase {
 
-  private static final Logger log = LoggerFactory.getLogger(AbstractConnection.class);
-
-  protected AbstractConnection(VertxInternal vertx, Channel channel, Context context) {
+  protected AbstractConnection(VertxInternal vertx, Channel channel, DefaultContext context) {
     super(vertx, channel, context);
+  }
+
+  void queueForWrite(final Object obj) {
+    if (channel.eventLoop().inEventLoop()) {
+      channel.outboundMessageBuffer().add(obj);
+    } else {
+      // thread is not our current eventloop for the channel we need to run the add in the eventloop.
+      // this is not needed for write as write will submit a task if needed by its own
+      channel.eventLoop().execute(new Runnable() {
+        @Override
+        public void run() {
+          channel.outboundMessageBuffer().add(obj);
+        }
+      });
+    }
   }
 
   ChannelFuture write(Object obj) {
@@ -43,4 +55,7 @@ public abstract class AbstractConnection extends ConnectionBase {
     }
   }
 
+  Vertx vertx() {
+    return vertx;
+  }
 }

@@ -5,6 +5,7 @@ import org.vertx.java.core.Vertx;
 import org.vertx.java.core.http.HttpClientResponse;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
+import org.vertx.java.platform.impl.ModuleIdentifier;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -26,13 +27,9 @@ import java.net.URISyntaxException;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  *
- * Bintray module names must be in the form:
+ * Given a module this resolver will look for the module at:
  *
- * user:repo:module_name:version
- *
- * Given a module name in that form, this resolver will look for the module at:
- *
- * content_root/<user>/<repo>/<module-name>/<module-name>-<version>.zip
+ * content_root/<owner>/vertx-mods/<module-name>/<module-name>-<version>.zip
  *
  * That's the recommended path for users to put modules in bintray, Vert.x can still find modules in bintray in
  * other paths if you use the GenericHttpRepoResolver
@@ -43,18 +40,12 @@ public class BintrayResolution extends HttpResolution {
 
   private final String uri;
 
-  public BintrayResolution(Vertx vertx, String repoHost, int repoPort, String moduleName, final String filename, String contentRoot) {
-    super(vertx, repoHost, repoPort, moduleName, filename);
+  public BintrayResolution(Vertx vertx, String repoHost, int repoPort, ModuleIdentifier moduleID, final String filename, String contentRoot) {
+    super(vertx, repoHost, repoPort, moduleID, filename);
     addHandler(200, new Handler<HttpClientResponse>() {
       @Override
       public void handle(HttpClientResponse resp) {
         downloadToFile(filename, resp);
-      }
-    });
-    addHandler(404, new Handler<HttpClientResponse>() {
-      @Override
-      public void handle(HttpClientResponse resp) {
-        //NOOP
       }
     });
     addHandler(302, new Handler<HttpClientResponse>() {
@@ -63,15 +54,11 @@ public class BintrayResolution extends HttpResolution {
         handle302(resp);
       }
     });
-    String[] parts = moduleName.split(":");
-    if (parts.length != 4) {
-      throw new IllegalArgumentException(moduleName + " must be of the form <user>:<repo>:<module_name>:<version>");
-    }
 
-    String user = parts[0];
-    String repo = parts[1];
-    String modName = parts[2];
-    String version = parts[3];
+    String user = moduleID.getOwner();
+    String repo = "vertx-mods";
+    String modName = moduleID.getName();
+    String version = moduleID.getVersion();
 
     StringBuilder sb = new StringBuilder(contentRoot);
     sb.append('/');

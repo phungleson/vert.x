@@ -16,49 +16,80 @@
 
 package org.vertx.java.core.impl;
 
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public class CountingCompletionHandler {
+public class CountingCompletionHandler<T> {
 
-  private final Context context;
-  private VertxInternal vertx;
+  private final DefaultContext context;
+  private final VertxInternal vertx;
+  private int count;
+  private int required;
+  private Handler<AsyncResult<T>> doneHandler;
+  private Throwable cause;
+  private boolean failed;
 
   public CountingCompletionHandler(VertxInternal vertx) {
-    this.vertx = vertx;
-    this.context = vertx.getOrAssignContext();
+    this(vertx, 0);
   }
 
-  int count;
-  int required;
-  Handler<Void> doneHandler;
+  public CountingCompletionHandler(VertxInternal vertx, int required) {
+    this.vertx = vertx;
+    this.context = vertx.getOrAssignContext();
+    this.required = required;
+  }
 
   public synchronized void complete() {
     count++;
     checkDone();
   }
 
+  public synchronized void failed(Throwable t) {
+    if (!failed) {
+      // Fail immediately - but only once
+      if (doneHandler != null) {
+        callHandler(new DefaultFutureResult<T>(t));
+      } else {
+        cause = t;
+      }
+      failed = true;
+    }
+  }
+
   public synchronized void incRequired() {
     required++;
   }
 
-  public synchronized void setHandler(Handler<Void> doneHandler) {
+  public synchronized void setHandler(Handler<AsyncResult<T>> doneHandler) {
     this.doneHandler = doneHandler;
     checkDone();
   }
 
-  void checkDone() {
-    if (doneHandler != null && count == required) {
-      if (vertx.getContext() == context) {
-        doneHandler.handle(null);
-      } else {
-        context.execute(new Runnable() {
+  private void callHandler(final AsyncResult<T> result) {
+    if (vertx.getContext() == context) {
+      doneHandler.handle(result);
+    } else {
+      context.execute(new Runnable() {
         public void run() {
-          doneHandler.handle(null);
+          doneHandler.handle(result);
         }
       });
+    }
+  }
+
+
+  void checkDone() {
+    if (doneHandler != null) {
+      if (cause != null) {
+        callHandler(new DefaultFutureResult<T>(cause));
+      } else {
+        if (count == required) {
+          final DefaultFutureResult<T> res = new DefaultFutureResult<T>((T)null);
+          callHandler(res);
+        }
       }
     }
   }

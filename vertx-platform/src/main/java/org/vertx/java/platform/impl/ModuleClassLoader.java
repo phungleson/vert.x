@@ -1,8 +1,6 @@
 package org.vertx.java.platform.impl;
 
 import org.vertx.java.core.impl.ConcurrentHashSet;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,12 +24,14 @@ import java.util.*;
  */
 public class ModuleClassLoader extends URLClassLoader {
 
-  private static final Logger log = LoggerFactory.getLogger(ModuleClassLoader.class);
-
   // When running in an IDE we want to always try and load from the platform classloader first
   // This allows in-container tests running in the IDE to immediately see changes to any resources in the module
   // without having to rebuild the module into the mods directory every time
-  public static boolean reverseLoadOrder = true;
+  private static boolean loadWithPlatformCL;
+  static {
+    String val = System.getProperty("vertx.loadWithPlatformCL");
+    loadWithPlatformCL = val == null || Boolean.valueOf(val);
+  }
 
   // When loading resources or classes we need to catch any circular dependencies
   private static ThreadLocal<Set<ModuleClassLoader>> circDepTL = new ThreadLocal<>();
@@ -66,7 +66,7 @@ public class ModuleClassLoader extends URLClassLoader {
       throws ClassNotFoundException {
     Class<?> c = findLoadedClass(name);
     if (c == null) {
-      if (reverseLoadOrder) {
+      if (loadWithPlatformCL) {
         try {
           c = platformClassLoader.loadClass(name);
         } catch (ClassNotFoundException e) {
@@ -96,12 +96,13 @@ public class ModuleClassLoader extends URLClassLoader {
                 // Try the next one
               }
             }
+            walked.remove(this);
           } finally {
             // Make sure we clear the thread locals afterwards
             checkClearTLs();
           }
           if (c == null) {
-            if (reverseLoadOrder) {
+            if (loadWithPlatformCL) {
               throw e;
             } else {
               // If we get here then the module classloaders couldn't load it so we try the platform class loader
@@ -128,7 +129,7 @@ public class ModuleClassLoader extends URLClassLoader {
       // Break the circular dep and reduce the ref count
       // We need to do this on ALL the parents in case there is another circular dep there
       clearParents();
-      throw new IllegalStateException("Circular dependency in module includes.");
+      throw new IllegalStateException("Circular dependency in module includes. " + mr.moduleKey);
     }
   }
 
@@ -162,6 +163,7 @@ public class ModuleClassLoader extends URLClassLoader {
             return url;
           }
         }
+        walked.remove(this);
         // If got here then none of the parents know about it, so try the platform class loader
         url = platformClassLoader.getResource(name);
       }
@@ -197,6 +199,7 @@ public class ModuleClassLoader extends URLClassLoader {
         Enumeration<URL> urls = parent.mcl.getResources(name);
         addURLs(totURLs, urls);
       }
+      walked.remove(this);
     } finally {
       checkClearTLs();
     }

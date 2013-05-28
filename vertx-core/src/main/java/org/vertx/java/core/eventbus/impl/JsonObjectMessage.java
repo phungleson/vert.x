@@ -16,23 +16,19 @@
 
 package org.vertx.java.core.eventbus.impl;
 
-import org.jboss.netty.util.CharsetUtil;
+import io.netty.util.CharsetUtil;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.json.JsonObject;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-class JsonObjectMessage extends BaseMessage<JsonObject> {
-
-  private static final Logger log = LoggerFactory.getLogger(JsonObjectMessage.class);
+public class JsonObjectMessage extends BaseMessage<JsonObject> {
 
   private byte[] encoded;
 
-  JsonObjectMessage(boolean send, String address, JsonObject body) {
+  public JsonObjectMessage(boolean send, String address, JsonObject body) {
     super(send, address, body);
   }
 
@@ -47,6 +43,7 @@ class JsonObjectMessage extends BaseMessage<JsonObject> {
     super(readBuff);
   }
 
+  @Override
   protected void readBody(int pos, Buffer readBuff) {
     boolean isNull = readBuff.getByte(pos) == (byte)0;
     if (!isNull) {
@@ -59,6 +56,7 @@ class JsonObjectMessage extends BaseMessage<JsonObject> {
     }
   }
 
+  @Override
   protected void writeBody(Buffer buff) {
     if (body == null) {
       buff.appendByte((byte)0);
@@ -69,6 +67,7 @@ class JsonObjectMessage extends BaseMessage<JsonObject> {
     }
   }
 
+  @Override
   protected int getBodyLength() {
     if (body == null) {
       return 1;
@@ -79,16 +78,14 @@ class JsonObjectMessage extends BaseMessage<JsonObject> {
     }
   }
 
-  protected Message copy() {
+  @Override
+  protected Message<JsonObject> copy() {
     return new JsonObjectMessage(this);
   }
 
+  @Override
   protected byte type() {
     return MessageFactory.TYPE_JSON;
-  }
-
-  protected BaseMessage createReplyMessage(JsonObject reply) {
-    return new JsonObjectMessage(true, replyAddress, reply);
   }
 
 }

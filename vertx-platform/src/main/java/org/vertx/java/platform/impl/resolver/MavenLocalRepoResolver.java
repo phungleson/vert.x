@@ -2,16 +2,11 @@ package org.vertx.java.platform.impl.resolver;
 
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
-import org.vertx.java.platform.impl.resolver.MavenIdentifier;
-import org.vertx.java.platform.impl.resolver.RepoResolver;
+import org.vertx.java.platform.impl.ModuleIdentifier;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.Override;
-import java.lang.String;
-import java.lang.System;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
 
@@ -43,38 +38,61 @@ public class MavenLocalRepoResolver implements RepoResolver {
     this.repoID = expandHome(repoID);
   }
 
-  private String expandHome(String repo) {
+  private static String expandHome(String repo) {
     return repo.replace("~", homeDir);
   }
 
-  @Override
-  public boolean getModule(String filename, String moduleName) {
-    MavenIdentifier id = new MavenIdentifier(moduleName);
-    //First look at the maven metadata
-    String metaDataFileName = repoID + "/" + id.uriRoot + "maven-metadata-remote.xml";
-    File metaDataFile = new File(metaDataFileName);
-    if (metaDataFile.exists()) {
-      try (Scanner scanner = new Scanner(metaDataFile).useDelimiter("\\A")) {
-        String data = scanner.next();
-        String fileName = MavenResolution.getResourceName(data, repoID, id);
-        File file = new File(fileName);
-        if (file.exists()) {
-          try {
-            Files.copy(file.toPath(), Paths.get(filename));
-            return true;
-          } catch (IOException e) {
-            log.error("Failed to copy file", e);
-            return false;
-          }
-        } else {
+  private boolean getModuleForMetaData(String filename,
+                                       ModuleIdentifier id,
+                                       File metaDataFile,
+                                       String uriRoot) {
+    try (Scanner scanner = new Scanner(metaDataFile).useDelimiter("\\A")) {
+      String data = scanner.next();
+      String fileName = MavenResolution.getResourceName(data, repoID, id, uriRoot);
+      File file = new File(fileName);
+      if (file.exists()) {
+        try {
+          Files.copy(file.toPath(), Paths.get(filename));
+          return true;
+        } catch (IOException e) {
+          log.error("Failed to copy file", e);
           return false;
         }
-      } catch (IOException e) {
-        log.error("Failed to read file", e);
+      } else {
         return false;
       }
-    } else {
+    } catch (IOException e) {
+      log.error("Failed to read file", e);
       return false;
+    }
+  }
+
+  @Override
+  public boolean getModule(String filename, ModuleIdentifier moduleIdentifier) {
+    String uriRoot = MavenResolution.getMavenURI(moduleIdentifier);
+    File localMetaDataFile =
+        new File(repoID + '/' + uriRoot + "maven-metadata-local.xml");
+    File remoteMetaDataFile =
+        new File(repoID + '/' + uriRoot + "maven-metadata-remote.xml");
+    boolean lExists = localMetaDataFile.exists();
+    boolean rExists = remoteMetaDataFile.exists();
+    if ((lExists && !rExists) || (lExists && rExists && localMetaDataFile.lastModified() >= remoteMetaDataFile.lastModified())) {
+      return getModuleForMetaData(filename, moduleIdentifier, localMetaDataFile, uriRoot);
+    } else if (rExists) {
+      return getModuleForMetaData(filename, moduleIdentifier, remoteMetaDataFile, uriRoot);
+    } else {
+      File nonSnapshotFile = new File(repoID + '/' + uriRoot + moduleIdentifier.getName() + '-' + moduleIdentifier.getVersion() + ".zip");
+      if (nonSnapshotFile.exists()) {
+        try {
+          Files.copy(nonSnapshotFile.toPath(), Paths.get(filename));
+          return true;
+        } catch (IOException e) {
+          log.error("Failed to copy file", e);
+          return false;
+        }
+      } else {
+        return false;
+      }
     }
   }
 

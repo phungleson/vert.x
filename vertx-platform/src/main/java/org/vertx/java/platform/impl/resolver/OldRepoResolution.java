@@ -1,9 +1,9 @@
 package org.vertx.java.platform.impl.resolver;
 
-import org.vertx.java.core.*;
+import org.vertx.java.core.Handler;
+import org.vertx.java.core.Vertx;
 import org.vertx.java.core.http.HttpClientResponse;
-
-import java.util.UUID;
+import org.vertx.java.platform.impl.ModuleIdentifier;
 
 /*
  * Copyright 2013 Red Hat, Inc.
@@ -26,9 +26,9 @@ public class OldRepoResolution extends HttpResolution {
 
   private final String contentRoot;
 
-  public OldRepoResolution(Vertx vertx, String repoHost, int repoPort, String moduleName, String filename,
+  public OldRepoResolution(Vertx vertx, String repoHost, int repoPort, ModuleIdentifier moduleIdentifier, String filename,
                            String contentRoot) {
-    super(vertx, repoHost, repoPort, moduleName, filename);
+    super(vertx, repoHost, repoPort, moduleIdentifier, filename);
     this.contentRoot = contentRoot;
   }
 
@@ -48,7 +48,7 @@ public class OldRepoResolution extends HttpResolution {
         downloadToFile(filename, resp);
       }
     });
-    String uri = contentRoot + "/" + moduleName + "/mod.zip";
+    String uri = contentRoot + '/' + modID.getOwner() + '.' + modID.getName() + "-v" + modID.getVersion() + "/mod.zip";
     makeRequest(repoHost, repoPort, uri);
   }
 }

@@ -1,12 +1,15 @@
 package org.vertx.java.platform.impl.resolver;
 
-import org.vertx.java.core.*;
+import org.vertx.java.core.Handler;
+import org.vertx.java.core.Vertx;
+import org.vertx.java.core.VoidHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.HttpClient;
 import org.vertx.java.core.http.HttpClientRequest;
 import org.vertx.java.core.http.HttpClientResponse;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
+import org.vertx.java.platform.impl.ModuleIdentifier;
 
 import java.io.BufferedOutputStream;
 import java.io.FileOutputStream;
@@ -48,7 +51,7 @@ public abstract class HttpResolution {
   private final Vertx vertx;
   protected final String repoHost;
   protected final int repoPort;
-  protected final String moduleName;
+  protected final ModuleIdentifier modID;
   protected final String filename;
   protected final String proxyHost = getProxyHost();
   protected final int proxyPort = getProxyPort();
@@ -69,11 +72,11 @@ public abstract class HttpResolution {
     return result;
   }
 
-  public HttpResolution(Vertx vertx, String repoHost, int repoPort, String moduleName, String filename) {
+  public HttpResolution(Vertx vertx, String repoHost, int repoPort, ModuleIdentifier modID, String filename) {
     this.vertx = vertx;
     this.repoHost = repoHost;
     this.repoPort = repoPort;
-    this.moduleName = moduleName;
+    this.modID = modID;
     this.filename = filename;
   }
 
@@ -93,8 +96,8 @@ public abstract class HttpResolution {
       client.setHost(host);
       client.setPort(port);
     }
-    client.exceptionHandler(new Handler<Exception>() {
-      public void handle(Exception e) {
+    client.exceptionHandler(new Handler<Throwable>() {
+      public void handle(Throwable t) {
         end(false);
       }
     });
@@ -122,11 +125,10 @@ public abstract class HttpResolution {
   protected void makeRequest(String host, int port, String uri) {
     sendRequest(host, port, uri, new Handler<HttpClientResponse>() {
       public void handle(HttpClientResponse resp) {
-        Handler<HttpClientResponse> handler = handlers.get(resp.statusCode);
+        Handler<HttpClientResponse> handler = handlers.get(resp.statusCode());
         if (handler != null) {
           handler.handle(resp);
         } else {
-          log.error("Failed to query repository: " + resp.statusCode);
           end(false);
         }
       }
@@ -147,7 +149,7 @@ public abstract class HttpResolution {
 
   protected void downloadToFile(String file, HttpClientResponse resp) {
     final OutputStream os;
-    log.info("Downloading " + moduleName + ". Please wait...");
+    log.info("Downloading " + modID + ". Please wait...");
     try {
       os = new BufferedOutputStream(new FileOutputStream(file));
     } catch (IOException e) {
@@ -178,14 +180,14 @@ public abstract class HttpResolution {
         }
       }
     });
-    resp.endHandler(new SimpleHandler() {
+    resp.endHandler(new VoidHandler() {
       @Override
       protected void handle() {
         if (!suppressDownloadCounter) {
-          System.out.println("");
+          System.out.println("\rDownloading 100%");
         }
         try {
-          os.flush();
+          os.close();
           end(true);
         } catch (IOException e) {
           log.error("Failed to flush file", e);
@@ -195,11 +197,11 @@ public abstract class HttpResolution {
     });
   }
 
-  private String getProxyHost() {
+  private static String getProxyHost() {
     return System.getProperty(HTTP_PROXY_HOST_PROP_NAME);
   }
 
-  private int getProxyPort() {
+  private static int getProxyPort() {
     return Integer.valueOf(System.getProperty(HTTP_PROXY_PORT_PROP_NAME, "80"));
   }
 

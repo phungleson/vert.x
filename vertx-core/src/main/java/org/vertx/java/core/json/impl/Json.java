@@ -16,22 +16,26 @@
 
 package org.vertx.java.core.json.impl;
 
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.map.SerializationConfig;
+
+
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.vertx.java.core.json.DecodeException;
 import org.vertx.java.core.json.EncodeException;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class Json {
 
-  private static final Logger log = LoggerFactory.getLogger(Json.class);
-
   private final static ObjectMapper mapper = new ObjectMapper();
   private final static ObjectMapper prettyMapper = new ObjectMapper();
+
+  static {
+    // Non-standard JSON but we allow C style comments in our JSON
+    mapper.configure(JsonParser.Feature.ALLOW_COMMENTS, true);
+  }
 
   public static String encode(Object obj) throws EncodeException {
     try {
@@ -50,9 +54,10 @@ public class Json {
     }
   }
 
-  public static Object decodeValue(String str, Class<?> clazz) throws DecodeException {
+  @SuppressWarnings("unchecked")
+  public static <T> T decodeValue(String str, Class<?> clazz) throws DecodeException {
     try {
-      return mapper.readValue(str, clazz);
+      return (T)mapper.readValue(str, clazz);
     }
     catch (Exception e) {
       throw new DecodeException("Failed to decode:" + e.getMessage());
@@ -60,7 +65,7 @@ public class Json {
   }
 
   static {
- 	 	prettyMapper.configure(SerializationConfig.Feature.INDENT_OUTPUT, true);
+ 	 	prettyMapper.configure(SerializationFeature.INDENT_OUTPUT, true);
   }
 
 }

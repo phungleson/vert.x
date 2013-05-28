@@ -27,6 +27,18 @@ import org.vertx.java.testframework.TestUtils;
  */
 public class JavaBufferTest extends TestCase {
 
+  //https://github.com/vert-x/vert.x/issues/561
+  @Test
+  public void testSetGetInt() throws Exception {
+    final int size = 10;
+    Buffer buffer = new Buffer(size);
+    for (int i = 0; i < size; i++) {
+      buffer.setInt(i * 4, (i + 1) * 10);
+    }
+    for (int i = 0; i < size; i++) {
+      assertEquals((i + 1) * 10, buffer.getInt(i * 4));
+    }
+  }
 
   @Test
   public void testAppendBuff() throws Exception {
@@ -368,7 +380,7 @@ public class JavaBufferTest extends TestCase {
     }
 
     for (int i = 0; i < numFloats; i++) {
-      assertEquals((float)i, b.getFloat(i * 4));
+      assertEquals((float) i, b.getFloat(i * 4));
     }
   }
 
@@ -381,7 +393,7 @@ public class JavaBufferTest extends TestCase {
     }
 
     for (int i = 0; i < numDoubles; i++) {
-      assertEquals((double)i, b.getDouble(i * 8));
+      assertEquals((double) i, b.getDouble(i * 8));
     }
   }
 
@@ -490,7 +502,7 @@ public class JavaBufferTest extends TestCase {
       buff.setFloat(i * 4, (float) i);
     }
     for (int i = 0; i < numSets; i++) {
-      assertEquals((float)i, buff.getFloat(i * 4));
+      assertEquals((float) i, buff.getFloat(i * 4));
     }
   }
 
@@ -509,7 +521,7 @@ public class JavaBufferTest extends TestCase {
       buff.setDouble(i * 8, (double) i);
     }
     for (int i = 0; i < numSets; i++) {
-      assertEquals((double)i, buff.getDouble(i * 8));
+      assertEquals((double) i, buff.getDouble(i * 8));
     }
   }
 

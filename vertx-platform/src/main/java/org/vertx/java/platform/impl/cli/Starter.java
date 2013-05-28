@@ -16,8 +16,7 @@
 
 package org.vertx.java.platform.impl.cli;
 
-import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
+import org.vertx.java.core.*;
 import org.vertx.java.core.json.DecodeException;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
@@ -25,7 +24,6 @@ import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.platform.PlatformLocator;
 import org.vertx.java.platform.PlatformManager;
 import org.vertx.java.platform.impl.Args;
-import org.vertx.java.platform.impl.ModuleClassLoader;
 import org.vertx.java.platform.impl.resolver.HttpResolution;
 
 import java.io.File;
@@ -54,7 +52,7 @@ public class Starter {
     // Show download stats - they don't display properly in Gradle so we only have them when running
     // on the command line
     HttpResolution.suppressDownloadCounter = false;
-    ModuleClassLoader.reverseLoadOrder = false;
+    System.setProperty("vertx.loadWithPlatformCL", "false");
     new Starter(args);
   }
 
@@ -100,16 +98,56 @@ public class Starter {
     }
   }
 
+  private static <T> AsyncResultHandler<T> createLoggingHandler(final String successMessage, final Handler<AsyncResult<T>> doneHandler) {
+    return new AsyncResultHandler<T>() {
+      @Override
+      public void handle(AsyncResult<T> res) {
+        if (res.failed()) {
+          Throwable cause = res.cause();
+          cause.printStackTrace();
+          if (cause instanceof VertxException) {
+            VertxException ve = (VertxException)cause;
+            log.error(ve.getMessage(), ve);
+            if (ve.getCause() != null) {
+              log.error(ve.getMessage(), ve);
+            }
+          } else {
+            log.error(cause);
+          }
+        } else {
+          log.trace(successMessage);
+        }
+        if (doneHandler != null) {
+          doneHandler.handle(res);
+        }
+      }
+    };
+  }
+
+  private Handler<AsyncResult<Void>> unblockHandler() {
+    return new Handler<AsyncResult<Void>>() {
+      public void handle(AsyncResult<Void> res) {
+        unblock();
+      }
+    };
+  }
+
   private void pullDependencies(String modName) {
-    createPM().pullInDependencies(modName);
+    log.info("Attempting to pull in dependencies for module " + modName);
+    createPM().pullInDependencies(modName, createLoggingHandler("Successfully pulled in dependencies", unblockHandler()));
+    block();
   }
 
   private void installModule(String modName) {
-    createPM().installModule(modName);
+    log.info("Attempting to install module " + modName);
+    createPM().installModule(modName, createLoggingHandler("Successfully installed module", unblockHandler()));
+    block();
   }
 
   private void uninstallModule(String modName) {
-    createPM().uninstallModule(modName);
+    log.info("Attempting to uninstall module " + modName);
+    createPM().uninstallModule(modName, createLoggingHandler("Successfully uninstalled module", unblockHandler()));
+    block();
   }
 
   private PlatformManager createPM() {
@@ -125,7 +163,7 @@ public class Starter {
   }
 
   private void registerExitHandler(PlatformManager mgr) {
-    mgr.registerExitHandler(new SimpleHandler() {
+    mgr.registerExitHandler(new VoidHandler() {
       public void handle() {
         unblock();
       }
@@ -139,7 +177,8 @@ public class Starter {
       log.info("Starting clustering...");
       int clusterPort = args.getInt("-cluster-port");
       if (clusterPort == -1) {
-        clusterPort = 25500;
+        // Default to zero - this means choose an ephemeral port
+        clusterPort = 0;
       }
       String clusterHost = args.map.get("-cluster-host");
       if (clusterHost == null) {
@@ -195,18 +234,18 @@ public class Starter {
       conf = null;
     }
 
-    Handler<String> doneHandler = new Handler<String>() {
-      public void handle(String id) {
-        if (id == null) {
+    Handler<AsyncResult<String>> doneHandler = new Handler<AsyncResult<String>>() {
+      public void handle(AsyncResult<String> res) {
+        if (res.failed()) {
           // Failed to deploy
           unblock();
         }
       }
     };
     if (zip) {
-      mgr.deployModuleFromZip(main, conf, instances, doneHandler);
+      mgr.deployModuleFromZip(main, conf, instances, createLoggingHandler("Successfully deployed module from zip", doneHandler));
     } else if (module) {
-      mgr.deployModule(main, conf, instances, doneHandler);
+      mgr.deployModule(main, conf, instances, createLoggingHandler("Successfully deployed module", doneHandler));
     } else {
       boolean worker = args.map.get("-worker") != null;
 
@@ -236,9 +275,10 @@ public class Starter {
       }
       String includes = args.map.get("-includes");
       if (worker) {
-        mgr.deployWorkerVerticle(false, main, conf, urls, instances, includes, doneHandler);
+        mgr.deployWorkerVerticle(false, main, conf, urls, instances, includes,
+                                 createLoggingHandler("Successfully deployed worker verticle", doneHandler));
       } else {
-        mgr.deployVerticle(main, conf, urls, instances, includes, doneHandler);
+        mgr.deployVerticle(main, conf, urls, instances, includes, createLoggingHandler("Successfully deployed verticle", doneHandler));
       }
     }
 
@@ -262,12 +302,12 @@ public class Starter {
   }
 
 
-  private void addShutdownHook(final PlatformManager mgr) {
+  private static void addShutdownHook(final PlatformManager mgr) {
     Runtime.getRuntime().addShutdownHook(new Thread() {
       public void run() {
         final CountDownLatch latch = new CountDownLatch(1);
-        mgr.undeployAll(new SimpleHandler() {
-          public void handle() {
+        mgr.undeployAll(new Handler<AsyncResult<Void>>() {
+          public void handle(AsyncResult<Void> res) {
             latch.countDown();
           }
         });
@@ -278,7 +318,7 @@ public class Starter {
             }
             break;
           } catch (InterruptedException e) {
-            //OK - can get spurious interupts
+            //OK - can get spurious wakeups
           }
         }
       }
@@ -288,7 +328,7 @@ public class Starter {
   /*
   Get default interface to use since the user hasn't specified one
    */
-  private String getDefaultAddress() {
+  private static String getDefaultAddress() {
     Enumeration<NetworkInterface> nets;
     try {
       nets = NetworkInterface.getNetworkInterfaces();
@@ -319,18 +359,18 @@ public class Starter {
       // Class not from JAR
       return "<unknown> (not a jar)";
     }
-    String manifestPath = classPath.substring(0, classPath.lastIndexOf("!") + 1) + "/META-INF/MANIFEST.MF";
+    String manifestPath = classPath.substring(0, classPath.lastIndexOf('!') + 1) + "/META-INF/MANIFEST.MF";
     Manifest manifest;
     try (InputStream is = new URL(manifestPath).openStream()) {
       manifest = new Manifest(is);
     } catch (IOException ex) {
-      return "<unknown> (" + ex.getMessage() + ")";
+      return "<unknown> (" + ex.getMessage() + ')';
     }
     Attributes attr = manifest.getMainAttributes();
     return attr.getValue("Vertx-Version");
   }
 
-  private void displaySyntax() {
+  private static void displaySyntax() {
 
     String usage =
 
@@ -358,7 +398,8 @@ public class Starter {
 "                               a cluster with any other vert.x instances on    \n" +
 "                               the network.                                    \n" +
 "        -cluster-port          port to use for cluster communication.          \n" +
-"                               Default is 25500.                               \n" +
+"                               Default is 0 which means chose a spare          \n" +
+"                               random port.                                    \n" +
 "        -cluster-host          host to bind to for cluster communication.      \n" +
 "                               If this is not specified vert.x will attempt    \n" +
 "                               to choose one from the available interfaces.  \n\n" +

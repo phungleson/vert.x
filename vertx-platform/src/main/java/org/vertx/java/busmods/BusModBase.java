@@ -40,8 +40,8 @@ public abstract class BusModBase extends Verticle {
    */
   public void start() {
     eb = vertx.eventBus();
-    config = container.getConfig();
-    logger = container.getLogger();
+    config = container.config();
+    logger = container.logger();
   }
 
   protected void sendOK(Message<JsonObject> message) {
@@ -75,7 +75,7 @@ public abstract class BusModBase extends Verticle {
   }
 
   protected String getMandatoryString(String field, Message<JsonObject> message) {
-    String val = message.body.getString(field);
+    String val = message.body().getString(field);
     if (val == null) {
       sendError(message, field + " must be specified");
     }
@@ -83,7 +83,7 @@ public abstract class BusModBase extends Verticle {
   }
 
   protected JsonObject getMandatoryObject(String field, Message<JsonObject> message) {
-    JsonObject val = message.body.getObject(field);
+    JsonObject val = message.body().getObject(field);
     if (val == null) {
       sendError(message, field + " must be specified");
     }
@@ -96,17 +96,17 @@ public abstract class BusModBase extends Verticle {
   }
 
   protected String getOptionalStringConfig(String fieldName, String defaultValue) {
-    String b = config.getString(fieldName);
-    return b == null ? defaultValue : b;
+    String s = config.getString(fieldName);
+    return s == null ? defaultValue : s;
   }
 
   protected int getOptionalIntConfig(String fieldName, int defaultValue) {
-    Integer b = (Integer)config.getNumber(fieldName);
-    return b == null ? defaultValue : b.intValue();
+    Number i = config.getNumber(fieldName);
+    return i == null ? defaultValue : i.intValue();
   }
 
   protected long getOptionalLongConfig(String fieldName, long defaultValue) {
-    Long l = (Long)config.getNumber(fieldName);
+    Number l = config.getNumber(fieldName);
     return l == null ? defaultValue : l.longValue();
   }
 
@@ -137,19 +137,19 @@ public abstract class BusModBase extends Verticle {
   }
 
   protected int getMandatoryIntConfig(String fieldName) {
-    Integer i = (Integer)config.getNumber(fieldName);
+    Number i = config.getNumber(fieldName);
     if (i == null) {
       throw new IllegalArgumentException(fieldName + " must be specified in config for busmod");
     }
-    return i;
+    return i.intValue();
   }
 
   protected long getMandatoryLongConfig(String fieldName) {
-    Long l = (Long)config.getNumber(fieldName);
+    Number l = config.getNumber(fieldName);
     if (l == null) {
       throw new IllegalArgumentException(fieldName + " must be specified in config for busmod");
     }
-    return l;
+    return l.longValue();
   }
 
 }

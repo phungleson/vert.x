@@ -16,22 +16,16 @@
 
 package org.vertx.java.core.http.impl;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.handler.codec.http.*;
+import io.netty.buffer.ByteBuf;
+import io.netty.handler.codec.http.*;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
-import org.vertx.java.core.http.HttpClient;
 import org.vertx.java.core.http.HttpClientRequest;
 import org.vertx.java.core.http.HttpClientResponse;
-import org.vertx.java.core.impl.Context;
-import org.vertx.java.core.impl.LowerCaseKeyMap;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
+import org.vertx.java.core.MultiMap;
+import org.vertx.java.core.impl.DefaultContext;
 
 import java.util.LinkedList;
-import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -40,32 +34,31 @@ import java.util.concurrent.TimeoutException;
  */
 public class DefaultHttpClientRequest implements HttpClientRequest {
 
-  private static final Logger log = LoggerFactory.getLogger(HttpClient.class);
-
   private final DefaultHttpClient client;
   private final HttpRequest request;
   private final Handler<HttpClientResponse> respHandler;
   private Handler<Void> continueHandler;
-  private final Context context;
+  private final DefaultContext context;
   private final boolean raw;
   private boolean chunked;
   private ClientConnection conn;
   private Handler<Void> drainHandler;
-  private Handler<Exception> exceptionHandler;
+  private Handler<Throwable> exceptionHandler;
   private boolean headWritten;
   private boolean completed;
-  private LinkedList<PendingChunk> pendingChunks;
+  private LinkedList<ByteBuf> pendingChunks;
   private int pendingMaxSize = -1;
   private boolean connecting;
   private boolean writeHead;
   private long written;
   private long currentTimeoutTimerId = -1;
-  private Map<String, Object> headers;
+  private MultiMap headers;
   private boolean exceptionOccurred;
+  private long lastDataReceived;
 
   DefaultHttpClientRequest(final DefaultHttpClient client, final String method, final String uri,
                            final Handler<HttpClientResponse> respHandler,
-                           final Context context) {
+                           final DefaultContext context) {
     this(client, method, uri, respHandler, context, false);
   }
 
@@ -75,7 +68,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
   */
   DefaultHttpClientRequest(final DefaultHttpClient client, final String method, final String uri,
                            final Handler<HttpClientResponse> respHandler,
-                           final Context context,
+                           final DefaultContext context,
                            final ClientConnection conn) {
     this(client, method, uri, respHandler, context, true);
     this.conn = conn;
@@ -84,7 +77,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
 
   private DefaultHttpClientRequest(final DefaultHttpClient client, final String method, final String uri,
                                    final Handler<HttpClientResponse> respHandler,
-                                   final Context context, final boolean raw) {
+                                   final DefaultContext context, final boolean raw) {
     this.client = client;
     this.request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.valueOf(method), uri);
     this.chunked = false;
@@ -94,6 +87,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
 
   }
 
+  @Override
   public DefaultHttpClientRequest setChunked(boolean chunked) {
     check();
     if (written > 0) {
@@ -103,96 +97,109 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     return this;
   }
 
-  public Map<String, Object> headers() {
+  @Override
+  public boolean isChunked() {
+    return chunked;
+  }
+
+  @Override
+  public MultiMap headers() {
     if (headers == null) {
-      headers = new LowerCaseKeyMap();
+      headers = new HttpHeadersAdapter(request.headers());
     }
     return headers;
   }
 
-  public HttpClientRequest putHeader(String name, Object value) {
+  @Override
+  public HttpClientRequest putHeader(String name, String value) {
     check();
-    headers().put(name, value);
+    headers().set(name, value);
     return this;
   }
 
-  public void writeBuffer(Buffer chunk) {
+  @Override
+  public HttpClientRequest putHeader(String name, Iterable<String> values) {
     check();
-    write(chunk.getChannelBuffer(), null);
+    headers().set(name, values);
+    return this;
   }
 
+  @Override
   public DefaultHttpClientRequest write(Buffer chunk) {
     check();
-    return write(chunk.getChannelBuffer(), null);
+    ByteBuf buf = chunk.getByteBuf();
+    if (chunk.isWrapper()) {
+      // call retain to make sure it is not released before the write completes
+      // the write will call buf.release() by it own
+      buf.retain();
+    }
+    return write(buf);
   }
 
+  @Override
   public DefaultHttpClientRequest write(String chunk) {
     check();
-    return write(new Buffer(chunk).getChannelBuffer(), null);
+    return write(new Buffer(chunk).getByteBuf());
   }
 
+  @Override
   public DefaultHttpClientRequest write(String chunk, String enc) {
     check();
-    return write(new Buffer(chunk, enc).getChannelBuffer(), null);
+    return write(new Buffer(chunk, enc).getByteBuf());
   }
 
-  public DefaultHttpClientRequest write(Buffer chunk, Handler<Void> doneHandler) {
-    check();
-    return write(chunk.getChannelBuffer(), doneHandler);
-  }
-
-  public DefaultHttpClientRequest write(String chunk, Handler<Void> doneHandler) {
-    checkComplete();
-    return write(new Buffer(chunk).getChannelBuffer(), doneHandler);
-  }
-
-  public DefaultHttpClientRequest write(String chunk, String enc, Handler<Void> doneHandler) {
-    check();
-    return write(new Buffer(chunk, enc).getChannelBuffer(), doneHandler);
-  }
-
-  public void setWriteQueueMaxSize(int maxSize) {
+  @Override
+  public HttpClientRequest setWriteQueueMaxSize(int maxSize) {
     check();
     if (conn != null) {
-      conn.setWriteQueueMaxSize(maxSize);
+      conn.doSetWriteQueueMaxSize(maxSize);
     } else {
       pendingMaxSize = maxSize;
     }
+    return this;
   }
 
+  @Override
   public boolean writeQueueFull() {
     check();
     if (conn != null) {
-      return conn.writeQueueFull();
+      return conn.doWriteQueueFull();
     } else {
       return false;
     }
   }
 
-  public void drainHandler(Handler<Void> handler) {
+  @Override
+  public HttpClientRequest drainHandler(Handler<Void> handler) {
     check();
     this.drainHandler = handler;
     if (conn != null) {
       conn.handleInterestedOpsChanged(); //If the channel is already drained, we want to call it immediately
     }
+    return this;
   }
 
-  public void exceptionHandler(final Handler<Exception> handler) {
+  @Override
+  public HttpClientRequest exceptionHandler(final Handler<Throwable> handler) {
     check();
-    this.exceptionHandler = new Handler<Exception>() {
+    this.exceptionHandler = new Handler<Throwable>() {
       @Override
-      public void handle(Exception event) {
+      public void handle(Throwable event) {
         cancelOutstandingTimeoutTimer();
         handler.handle(event);
       }
     };
+    return this;
   }
 
-  public void continueHandler(Handler<Void> handler) {
+  @Override
+  public HttpClientRequest continueHandler(Handler<Void> handler) {
     check();
     this.continueHandler = handler;
+    return this;
   }
 
+  @Override
   public DefaultHttpClientRequest sendHead() {
     check();
     if (conn != null) {
@@ -207,29 +214,35 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     return this;
   }
 
+  @Override
   public void end(String chunk) {
     end(new Buffer(chunk));
   }
 
+  @Override
   public void end(String chunk, String enc) {
     end(new Buffer(chunk, enc));
   }
 
+  @Override
   public void end(Buffer chunk) {
     if (!chunked && !contentLengthSet()) {
-      headers().put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
+      headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
     }
     write(chunk);
     end();
   }
 
+  @Override
   public void end() {
     check();
     completed = true;
     if (conn != null) {
       if (!headWritten) {
         // No body
-        writeHead();
+        prepareHeaders();
+        conn.queueForWrite(request);
+        writeEndChunk();
       } else if (chunked) {
         //Body written - we use HTTP chunking so must send an empty buffer
         writeEndChunk();
@@ -246,10 +259,17 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     currentTimeoutTimerId = client.getVertx().setTimer(timeoutMs, new Handler<Long>() {
       @Override
       public void handle(Long event) {
-        handleException(new TimeoutException("The timeout period of " + timeoutMs + "ms has been exceeded"));
+        handleTimeout(timeoutMs);
       }
     });
     return this;
+  }
+
+  // Data has been received on the response
+  void dataReceived() {
+    if (currentTimeoutTimerId != -1) {
+      lastDataReceived = System.currentTimeMillis();
+    }
   }
 
   void handleDrained() {
@@ -258,13 +278,13 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     }
   }
 
-  void handleException(Exception e) {
+  void handleException(Throwable t) {
+    cancelOutstandingTimeoutTimer();
     exceptionOccurred = true;
     if (exceptionHandler != null) {
-      exceptionHandler.handle(e); // the handler cancels the timer.
+      exceptionHandler.handle(t);
     } else {
-      cancelOutstandingTimeoutTimer();
-      log.error("Unhandled exception", e);
+      context.reportException(t);
     }
   }
 
@@ -273,7 +293,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     if (!exceptionOccurred) {
       cancelOutstandingTimeoutTimer();
       try {
-        if (resp.statusCode == 100) {
+        if (resp.statusCode() == 100) {
           if (continueHandler != null) {
             continueHandler.handle(null);
           }
@@ -281,20 +301,36 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
           respHandler.handle(resp);
         }
       } catch (Throwable t) {
-        if (t instanceof Exception) {
-          handleException((Exception) t);
-        } else {
-          log.error("Unhandled exception", t);
-        }
+        handleException(t);
       }
     }
   }
 
   private void cancelOutstandingTimeoutTimer() {
-    if(currentTimeoutTimerId != -1) {
+    if (currentTimeoutTimerId != -1) {
       client.getVertx().cancelTimer(currentTimeoutTimerId);
       currentTimeoutTimerId = -1;
     }
+  }
+
+  private void handleTimeout(long timeoutMs) {
+    if (lastDataReceived == 0) {
+      timeout(timeoutMs);
+    } else {
+      long now = System.currentTimeMillis();
+      long timeSinceLastData = now - lastDataReceived;
+      if (timeSinceLastData >= timeoutMs) {
+        timeout(timeoutMs);
+      } else {
+        // reschedule
+        lastDataReceived = 0;
+        setTimeout(timeoutMs - timeSinceLastData);
+      }
+    }
+  }
+
+  private void timeout(long timeoutMs) {
+    handleException(new TimeoutException("The timeout period of " + timeoutMs + "ms has been exceeded"));
   }
 
   private void connect() {
@@ -304,8 +340,8 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
       //they can capture any exceptions on connection
       client.getConnection(new Handler<ClientConnection>() {
         public void handle(ClientConnection conn) {
-          if (!conn.isClosed()) {
-            connected(conn);
+            if (!conn.isClosed()) {
+                connected(conn);
           } else {
             connect();
           }
@@ -324,57 +360,48 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     // we need to write it now
 
     if (pendingMaxSize != -1) {
-      conn.setWriteQueueMaxSize(pendingMaxSize);
+      conn.doSetWriteQueueMaxSize(pendingMaxSize);
     }
-
     if (pendingChunks != null || writeHead || completed) {
       writeHead();
       headWritten = true;
     }
 
     if (pendingChunks != null) {
-      for (PendingChunk chunk : pendingChunks) {
-        sendChunk(chunk.chunk, chunk.doneHandler);
+      for (ByteBuf chunk : pendingChunks) {
+        sendChunk(chunk);
       }
     }
     if (completed) {
-      if (chunked) {
-        writeEndChunk();
-      }
+      writeEndChunk();
       conn.endRequest();
     }
   }
 
   private boolean contentLengthSet() {
     if (headers != null) {
-      return headers.containsKey(HttpHeaders.Names.CONTENT_LENGTH);
+      return headers.contains(HttpHeaders.Names.CONTENT_LENGTH);
     } else {
       return false;
     }
   }
 
   private void writeHead() {
-    request.setChunked(chunked);
-    if (!raw) {
-      request.setHeader(HttpHeaders.Names.HOST, conn.hostHeader);
-      if (chunked) {
-        request.setHeader(HttpHeaders.Names.TRANSFER_ENCODING, HttpHeaders.Values.CHUNKED);
-      }
-    }
-    writeHeaders();
+    prepareHeaders();
     conn.write(request);
   }
 
-  private void writeHeaders() {
-    if (headers != null) {
-      for (Map.Entry<String, Object> header: headers.entrySet()) {
-        String key = header.getKey();
-        request.setHeader(key, header.getValue());
+  private void prepareHeaders() {
+    request.headers().remove(HttpHeaders.Names.TRANSFER_ENCODING);
+    if (!raw) {
+      request.headers().set(HttpHeaders.Names.HOST, conn.hostHeader);
+      if (chunked) {
+        HttpHeaders.setTransferEncodingChunked(request);
       }
     }
   }
 
-  private DefaultHttpClientRequest write(ChannelBuffer buff, Handler<Void> doneHandler) {
+  private DefaultHttpClientRequest write(ByteBuf buff) {
 
     written += buff.readableBytes();
 
@@ -387,28 +414,25 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
       if (pendingChunks == null) {
         pendingChunks = new LinkedList<>();
       }
-      pendingChunks.add(new PendingChunk(buff, doneHandler));
+      pendingChunks.add(buff);
       connect();
     } else {
       if (!headWritten) {
-        writeHead();
+        prepareHeaders();
+        conn.queueForWrite(request);
         headWritten = true;
       }
-      sendChunk(buff, doneHandler);
+      sendChunk(buff);
     }
     return this;
   }
 
-  private void sendChunk(ChannelBuffer buff, Handler<Void> doneHandler) {
-    Object write = chunked ? new DefaultHttpChunk(buff) : buff;
-    ChannelFuture writeFuture = conn.write(write);
-    if (doneHandler != null) {
-      conn.addFuture(doneHandler, writeFuture);
-    }
+  private void sendChunk(ByteBuf buff) {
+    conn.write(new DefaultHttpContent(buff));
   }
 
   private void writeEndChunk() {
-    conn.write(new DefaultHttpChunk(ChannelBuffers.EMPTY_BUFFER));
+    conn.write(LastHttpContent.EMPTY_LAST_CONTENT);
   }
 
   private void check() {
@@ -418,16 +442,6 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
   private void checkComplete() {
     if (completed) {
       throw new IllegalStateException("Request already complete");
-    }
-  }
-
-  private static class PendingChunk {
-    final ChannelBuffer chunk;
-    final Handler<Void> doneHandler;
-
-    private PendingChunk(ChannelBuffer chunk, Handler<Void> doneHandler) {
-      this.chunk = chunk;
-      this.doneHandler = doneHandler;
     }
   }
 

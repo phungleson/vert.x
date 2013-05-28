@@ -21,14 +21,19 @@ buildscript {
     flatDir {
       dir 'extralibs'
     }
-    mavenLocal()
+    if (System.getenv("VERTX_DISABLE_MAVENLOCAL") == null) {
+      // We don't want to use mavenLocal when running on CI - mavenLocal is only useful in Gradle for
+      // publishing artifacts locally for development purposes - maven local is also not threadsafe when there
+      // are concurrent builds
+      mavenLocal()
+    }
     maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }
     mavenCentral()
   }
   dependencies {
     classpath 'com.eriwen:gradle-js-plugin:1.1'
   }
-} 
+}
 
 apply plugin: 'js'
 
@@ -51,7 +56,9 @@ subprojects {
   group = rootProject.group
 
   repositories {
-    mavenLocal()
+    if (System.getenv("VERTX_DISABLE_MAVENLOCAL") == null) {
+      mavenLocal()
+    }
     maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }
     mavenCentral()
   }
@@ -62,11 +69,22 @@ subprojects {
       exclude group: "io.vertx"
       exclude group: "junit"
     }
-    testCompile project(":vertx-platform")
   }
 
   javadoc {
     destinationDir = file("build/docs/java/api")
+  }
+
+  task collectDeps(type: Copy) {
+    destinationDir = file("build/deps")
+    into("compile") {
+      from configurations.compile
+      exclude "vertx-*.jar"
+    }
+    into("test") {
+      from configurations.testCompile
+      exclude "vertx-*.jar"
+    }
   }
 }
 
@@ -103,42 +121,8 @@ task assemble(type: Copy, dependsOn: [subprojects.assemble]) {
     filter(org.apache.tools.ant.filters.ReplaceTokens, tokens:[version: rootProject.version])
     exclude "**/META_INF/**"
   }
-  into('examples') {
-    from file("vertx-examples/src/main")
-    exclude "**/vertx-dev*"
-  }
-  into('examples/java/eventbusbridge') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/groovy/eventbusbridge') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/javascript/eventbusbridge') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/python/eventbusbridge') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/ruby/eventbusbridge') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/groovy/webapp/web/js') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/javascript/webapp/web/js') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/javascript/angularjs/web/js') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/python/webapp/web/js') {
-    from file("src/dist/client/vertxbus.js")
-  }
-  into('examples/ruby/webapp/web/js') {
-    from file("src/dist/client/vertxbus.js")
-  }
   into('lib') {
-    from subprojects.configurations.compile    
+    from subprojects.configurations.compile
     from subprojects.jar
     // Don't just include everything!!
     includes = ["jackson*.jar", "netty*.jar", "hazelcast*.jar", "vertx*.jar"]
@@ -166,7 +150,7 @@ task javadocs(type: Javadoc, dependsOn: subprojects.javadoc) {
   excludes = ["**/impl/**"]
   includes = ["**/core/**", "**/platform/**"]
 
-  destinationDir file("build/$rootProject.name-$version/api-docs/java/api")
+  destinationDir file("build/${rootProject.name}-$version/api-docs/java/api")
   inputs.files classpath
   outputs.dir destinationDir
 }
@@ -193,13 +177,13 @@ task distTar(type: Tar, dependsOn: ['assemble', 'minifyClient', 'createDocs']) {
 
   compression = org.gradle.api.tasks.bundling.Compression.GZIP
   destinationDir file('build/distributions')
-  inputs.files files("build/$rootProject.name-$version")
+  inputs.files files("build/${rootProject.name}-$version")
   outputs.dir destinationDir
   baseName = rootProject.name
   version = rootProject.version
   extension = 'tar.gz'
   from 'build'
-  include "$rootProject.name-$version/**"
+  include "${rootProject.name}-$version/**"
 }
 
 task dist(dependsOn: ['distTar', 'distZip']){

@@ -16,111 +16,169 @@
 
 package org.vertx.java.core.net.impl;
 
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.util.CharsetUtil;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.util.CharsetUtil;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
+import org.vertx.java.core.VoidHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.file.impl.PathAdjuster;
-import org.vertx.java.core.impl.Context;
+import org.vertx.java.core.impl.DefaultContext;
 import org.vertx.java.core.impl.VertxInternal;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.NetSocket;
 
 import java.io.File;
+import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
 import java.util.UUID;
 
-public class DefaultNetSocket extends NetSocket {
+public class DefaultNetSocket extends ConnectionBase implements NetSocket {
 
-  @SuppressWarnings("unused")
-	private static final Logger log = LoggerFactory.getLogger(DefaultNetSocket.class);
+  private final String writeHandlerID;
 
   private Handler<Buffer> dataHandler;
   private Handler<Void> endHandler;
   private Handler<Void> drainHandler;
-  private Handler<Message<Buffer>> writeHandler;
+  private final Handler<Message<Buffer>> writeHandler;
 
-  public DefaultNetSocket(VertxInternal vertx, Channel channel, Context context) {
-    super(vertx, channel, UUID.randomUUID().toString(), context);
+  public DefaultNetSocket(VertxInternal vertx, Channel channel, DefaultContext context) {
+    super(vertx, channel, context);
+    this.writeHandlerID = UUID.randomUUID().toString();
     writeHandler = new Handler<Message<Buffer>>() {
       public void handle(Message<Buffer> msg) {
-        writeBuffer(msg.body);
+        write(msg.body());
       }
     };
     vertx.eventBus().registerLocalHandler(writeHandlerID, writeHandler);
   }
 
-  public void writeBuffer(Buffer data) {
-    doWrite(data.getChannelBuffer());
+  @Override
+  public String writeHandlerID() {
+    return writeHandlerID;
   }
 
+  @Override
   public NetSocket write(Buffer data) {
-    doWrite(data.getChannelBuffer());
+    ByteBuf buf = data.getByteBuf();
+    if (data.isWrapper()) {
+      // call retain to make sure it is not released before the write completes
+      // the write will call buf.release() by it own
+      buf.retain();
+    }
+    doWrite(buf);
     return this;
   }
 
+  @Override
   public NetSocket write(String str) {
-    doWrite(ChannelBuffers.copiedBuffer(str, CharsetUtil.UTF_8));
+    doWrite(Unpooled.copiedBuffer(str, CharsetUtil.UTF_8));
     return this;
   }
 
+  @Override
   public NetSocket write(String str, String enc) {
     if (enc == null) {
       write(str);
     } else {
-      doWrite(ChannelBuffers.copiedBuffer(str, Charset.forName(enc)));
+      doWrite(Unpooled.copiedBuffer(str, Charset.forName(enc)));
     }
     return this;
   }
 
-  public NetSocket write(Buffer data, Handler<Void> doneHandler) {
-    addFuture(doneHandler, doWrite(data.getChannelBuffer()));
-    return this;
-  }
-
-  public NetSocket write(String str, Handler<Void> doneHandler) {
-    addFuture(doneHandler, doWrite(ChannelBuffers.copiedBuffer(str, CharsetUtil.UTF_8)));
-    return this;
-  }
-
-  public NetSocket write(String str, String enc, Handler<Void> doneHandler) {
-    if (enc == null) {
-      write(str, enc);
-    } else {
-      addFuture(doneHandler, doWrite(ChannelBuffers.copiedBuffer(str, Charset.forName(enc))));
-    }
-    return this;
-  }
-
-  public void dataHandler(Handler<Buffer> dataHandler) {
+  @Override
+  public NetSocket dataHandler(Handler<Buffer> dataHandler) {
     this.dataHandler = dataHandler;
+    return this;
   }
 
-  public void endHandler(Handler<Void> endHandler) {
+  @Override
+  public NetSocket pause() {
+    doPause();
+    return this;
+  }
+
+  @Override
+  public NetSocket resume() {
+    doResume();
+    return this;
+  }
+
+  @Override
+  public NetSocket setWriteQueueMaxSize(int maxSize) {
+    doSetWriteQueueMaxSize(maxSize);
+    return this;
+  }
+
+  @Override
+  public boolean writeQueueFull() {
+    return doWriteQueueFull();
+  }
+
+  @Override
+  public NetSocket endHandler(Handler<Void> endHandler) {
     this.endHandler = endHandler;
+    return this;
   }
 
-  public void drainHandler(Handler<Void> drainHandler) {
+  @Override
+  public NetSocket drainHandler(Handler<Void> drainHandler) {
     this.drainHandler = drainHandler;
-    vertx.runOnLoop(new SimpleHandler() {
+    vertx.runOnContext(new VoidHandler() {
       public void handle() {
         callDrainHandler(); //If the channel is already drained, we want to call it immediately
       }
     });
+    return this;
   }
 
-  public void sendFile(String filename) {
+  @Override
+  public NetSocket sendFile(String filename) {
     File f = new File(PathAdjuster.adjust(vertx, filename));
     super.sendFile(f);
+    return this;
   }
 
-  protected Context getContext() {
+  @Override
+  public InetSocketAddress remoteAddress() {
+    return super.remoteAddress();
+  }
+
+  public InetSocketAddress localAddress() {
+    return super.localAddress();
+  }
+
+  @Override
+  public NetSocket exceptionHandler(Handler<Throwable> handler) {
+    this.exceptionHandler = handler;
+    return this;
+  }
+
+  @Override
+  public NetSocket closeHandler(Handler<Void> handler) {
+    this.closeHandler = handler;
+    return this;
+  }
+
+  @Override
+  public void close() {
+    if (writeFuture != null) {
+      // Close after all data is written
+      writeFuture.addListener(new ChannelFutureListener() {
+        @Override
+        public void operationComplete(ChannelFuture channelFuture) throws Exception {
+          channel.close();
+        }
+      });
+    } else {
+      channel.close();
+    }
+  }
+
+  protected DefaultContext getContext() {
     return super.getContext();
   }
 
@@ -139,7 +197,7 @@ public class DefaultNetSocket extends NetSocket {
     }
   }
 
-  void handleInterestedOpsChanged() {
+  public void handleInterestedOpsChanged() {
     setContext();
     callDrainHandler();
   }
@@ -155,18 +213,15 @@ public class DefaultNetSocket extends NetSocket {
     }
   }
 
-  //Close without checking thread - used when server is closed
-  void internalClose() {
-    channel.close();
-  }
+  private ChannelFuture writeFuture;
 
-  private ChannelFuture doWrite(ChannelBuffer buff) {
-    return channel.write(buff);
+  private void doWrite(ByteBuf buff) {
+    writeFuture = channel.write(buff);
   }
 
   private void callDrainHandler() {
     if (drainHandler != null) {
-      if (channel.isWritable()) {
+      if (!writeQueueFull()) {
         try {
           drainHandler.handle(null);
         } catch (Throwable t) {
@@ -175,5 +230,6 @@ public class DefaultNetSocket extends NetSocket {
       }
     }
   }
+
 }
 

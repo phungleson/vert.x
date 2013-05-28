@@ -17,9 +17,7 @@
 package org.vertx.java.tests.core.http;
 
 import org.junit.Test;
-import org.vertx.java.core.Handler;
-import org.vertx.java.core.SimpleHandler;
-import org.vertx.java.core.Vertx;
+import org.vertx.java.core.*;
 import org.vertx.java.core.http.HttpClient;
 import org.vertx.java.core.http.HttpClientResponse;
 import org.vertx.java.core.http.HttpServer;
@@ -91,23 +89,27 @@ public class JavaHttpTest extends TestBase {
 
     final CountDownLatch latch = new CountDownLatch(1);
 
-    final Vertx vertx = Vertx.newVertx();
+    final Vertx vertx = VertxFactory.newVertx();
 
     final HttpServer server = vertx.createHttpServer();
     server.requestHandler(new Handler<HttpServerRequest>() {
       public void handle(HttpServerRequest req) {
-        req.response.end();
+        req.response().end();
       }
     });
-    server.listen(8080);
-
-    final HttpClient client = vertx.createHttpClient().setPort(8080);
-    client.getNow("some-uri", new Handler<HttpClientResponse>() {
-      public void handle(HttpClientResponse resp) {
-        server.close(new SimpleHandler() {
-          public void handle() {
-            client.close();
-            latch.countDown();
+    server.listen(8080, new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        final HttpClient client = vertx.createHttpClient().setPort(8080);
+        client.getNow("some-uri", new Handler<HttpClientResponse>() {
+          public void handle(HttpClientResponse resp) {
+            server.close(new AsyncResultHandler<Void>() {
+              @Override
+              public void handle(AsyncResult<Void> event) {
+                client.close();
+                latch.countDown();
+              }
+            });
           }
         });
       }
@@ -273,14 +275,6 @@ public class JavaHttpTest extends TestBase {
     startTest(getMethodName());
   }
 
-  public void testRequestBodyWriteBufferChunkedCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteBufferNonChunkedCompletion() {
-    startTest(getMethodName());
-  }
-
   public void testRequestBodyWriteStringChunkedDefaultEncoding() {
     startTest(getMethodName());
   }
@@ -302,30 +296,6 @@ public class JavaHttpTest extends TestBase {
   }
 
   public void testRequestBodyWriteStringNonChunkedUTF16() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringChunkedDefaultEncodingCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringChunkedUTF8Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringChunkedUTF16Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringNonChunkedDefaultEncodingCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringNonChunkedUTF8Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testRequestBodyWriteStringNonChunkedUTF16Completion() {
     startTest(getMethodName());
   }
 
@@ -389,14 +359,6 @@ public class JavaHttpTest extends TestBase {
     startTest(getMethodName());
   }
 
-  public void testResponseBodyWriteBufferChunkedCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteBufferNonChunkedCompletion() {
-    startTest(getMethodName());
-  }
-
   public void testResponseBodyWriteStringChunkedDefaultEncoding() {
     startTest(getMethodName());
   }
@@ -421,30 +383,6 @@ public class JavaHttpTest extends TestBase {
     startTest(getMethodName());
   }
 
-  public void testResponseBodyWriteStringChunkedDefaultEncodingCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteStringChunkedUTF8Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteStringChunkedUTF16Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteStringNonChunkedDefaultEncodingCompletion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteStringNonChunkedUTF8Completion() {
-    startTest(getMethodName());
-  }
-
-  public void testResponseBodyWriteStringNonChunkedUTF16Completion() {
-    startTest(getMethodName());
-  }
-
   public void testResponseWriteBuffer() {
     startTest(getMethodName());
   }
@@ -454,6 +392,14 @@ public class JavaHttpTest extends TestBase {
   }
 
   public void testSendFile() {
+    startTest(getMethodName());
+  }
+
+  public void testSendFileNotFound() {
+    startTest(getMethodName());
+  }
+
+  public void testSendFileNotFoundWith404Page() {
     startTest(getMethodName());
   }
 
@@ -494,6 +440,10 @@ public class JavaHttpTest extends TestBase {
   }
 
   public void testRequestTimesoutWhenIndicatedPeriodExpiresWithoutAResponseFromRemoteServer() {
+    startTest(getMethodName());
+  }
+
+  public void testRequestTimeoutExtendedWhenResponseChunksReceived() {
     startTest(getMethodName());
   }
 
@@ -636,6 +586,56 @@ public class JavaHttpTest extends TestBase {
 
   @Test
   public void testHeadNoBody() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testRemoteAddress() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testGetAbsoluteURI() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testListenInvalidPort() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testListenInvalidHost() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testPauseClientResponse() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testHttpVersion() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testFormUploadFile() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testFormUploadAttributes() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testFormUploadAttributes2() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testAccessNetSocket() throws Exception {
     startTest(getMethodName());
   }
 

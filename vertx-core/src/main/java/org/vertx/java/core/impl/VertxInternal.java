@@ -17,9 +17,7 @@
 package org.vertx.java.core.impl;
 
 
-import org.jboss.netty.channel.socket.nio.NioClientBossPool;
-import org.jboss.netty.channel.socket.nio.NioServerBossPool;
-import org.jboss.netty.util.Timer;
+import io.netty.channel.EventLoopGroup;
 import org.vertx.java.core.Vertx;
 import org.vertx.java.core.http.impl.DefaultHttpServer;
 import org.vertx.java.core.net.impl.DefaultNetServer;
@@ -35,41 +33,37 @@ import java.util.concurrent.ExecutorService;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public abstract class VertxInternal extends Vertx {
+public interface VertxInternal extends Vertx {
 
-  public abstract NioServerBossPool getServerAcceptorPool();
+  EventLoopGroup getEventLoopGroup();
 
-  public abstract NioClientBossPool getClientAcceptorPool();
+  ExecutorService getBackgroundPool();
 
-  public abstract ExecutorService getBackgroundPool();
+  DefaultContext startOnEventLoop(Runnable runnable);
 
-  public abstract Context startOnEventLoop(Runnable runnable);
+  DefaultContext startInBackground(Runnable runnable, boolean multiThreaded);
 
-  public abstract Context startInBackground(Runnable runnable, boolean multiThreaded);
+  DefaultContext getOrAssignContext();
 
-  public abstract Context getOrAssignContext();
+  void reportException(Throwable t);
 
-  public abstract void reportException(Throwable t);
+  Map<ServerID, DefaultHttpServer> sharedHttpServers();
 
-  public abstract Map<ServerID, DefaultHttpServer> sharedHttpServers();
-
-  public abstract Map<ServerID, DefaultNetServer> sharedNetServers();
-
-  public abstract Timer getTimer();
+  Map<ServerID, DefaultNetServer> sharedNetServers();
 
 	/**
 	 * Get the current context
 	 * @return the context
 	 */
-	public abstract Context getContext();
+	DefaultContext getContext();
 
 	/**
 	 * Set the current context
 	 */
-  public abstract void setContext(Context context);
+  void setContext(DefaultContext context);
 
   /**
    * @return event loop context
    */
-  public abstract EventLoopContext createEventLoopContext();
+  EventLoopContext createEventLoopContext();
 }

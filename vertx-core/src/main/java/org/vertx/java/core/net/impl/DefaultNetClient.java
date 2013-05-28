@@ -16,26 +16,22 @@
 
 package org.vertx.java.core.net.impl;
 
-import org.jboss.netty.bootstrap.ClientBootstrap;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.*;
-import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
-import org.jboss.netty.channel.socket.nio.NioSocketChannel;
-import org.jboss.netty.handler.ssl.SslHandler;
-import org.jboss.netty.handler.stream.ChunkedWriteHandler;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.*;
+import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.stream.ChunkedWriteHandler;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.GenericFutureListener;
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.buffer.Buffer;
-import org.vertx.java.core.impl.Context;
-import org.vertx.java.core.impl.EventLoopContext;
-import org.vertx.java.core.impl.VertxInternal;
+import org.vertx.java.core.impl.*;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.NetClient;
 import org.vertx.java.core.net.NetSocket;
 
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
-import javax.net.ssl.SSLHandshakeException;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,55 +42,53 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DefaultNetClient implements NetClient {
 
   private static final Logger log = LoggerFactory.getLogger(DefaultNetClient.class);
+  private static final ExceptionDispatchHandler EXCEPTION_DISPATCH_HANDLER = new ExceptionDispatchHandler();
 
   private final VertxInternal vertx;
-  private final Context actualCtx;
-  private final EventLoopContext eventLoopContext;
+  private final DefaultContext actualCtx;
   private final TCPSSLHelper tcpHelper = new TCPSSLHelper();
-  private ClientBootstrap bootstrap;
-  private Map<Channel, DefaultNetSocket> socketMap = new ConcurrentHashMap<>();
-  private Handler<Exception> exceptionHandler;
+  private Bootstrap bootstrap;
+  private final Map<Channel, DefaultNetSocket> socketMap = new ConcurrentHashMap<>();
   private int reconnectAttempts;
   private long reconnectInterval = 1000;
+  private boolean configurable = true;
+  private final Closeable closeHook = new Closeable() {
+    @Override
+    public void close(Handler<AsyncResult<Void>> doneHandler) {
+      DefaultNetClient.this.close();
+      doneHandler.handle(new DefaultFutureResult<>((Void)null));
+    }
+  };
 
   public DefaultNetClient(VertxInternal vertx) {
     this.vertx = vertx;
-    // This is kind of fiddly - this class might be used by a worker, in which case the context is not
-    // an event loop context - but we need an event loop context so that netty can deliver any messages for the connection
-    // Therefore, if the current context is not an event loop one, we need to create one and register that with the
-    // handler manager when registering handlers
-    // We then do a check when messages are delivered that we're on the right worker before delivering the message
-    // All of this will be massively simplified in Netty 4.0 when the event loop becomes a first class citizen
     actualCtx = vertx.getOrAssignContext();
-    actualCtx.putCloseHook(this, new Runnable() {
-      public void run() {
-        close();
-      }
-    });
-    if (actualCtx instanceof EventLoopContext) {
-      eventLoopContext = (EventLoopContext)actualCtx;
-    } else {
-      eventLoopContext = vertx.createEventLoopContext();
-    }
+    actualCtx.addCloseHook(closeHook);
   }
 
-  public NetClient connect(int port, String host, final Handler<NetSocket> connectHandler) {
+  @Override
+  public NetClient connect(int port, String host, final Handler<AsyncResult<NetSocket>> connectHandler) {
     connect(port, host, connectHandler, reconnectAttempts);
     return this;
   }
 
-  public NetClient connect(int port, Handler<NetSocket> connectCallback) {
+  @Override
+  public NetClient connect(int port, final Handler<AsyncResult<NetSocket>> connectCallback) {
     connect(port, "localhost", connectCallback);
     return this;
   }
 
+  @Override
   public void close() {
     for (NetSocket sock : socketMap.values()) {
       sock.close();
     }
+    actualCtx.removeCloseHook(closeHook);
   }
 
+  @Override
   public NetClient setReconnectAttempts(int attempts) {
+    checkConfigurable();
     if (attempts < -1) {
       throw new IllegalArgumentException("reconnect attempts must be >= -1");
     }
@@ -102,11 +96,14 @@ public class DefaultNetClient implements NetClient {
     return this;
   }
 
+  @Override
   public int getReconnectAttempts() {
     return reconnectAttempts;
   }
 
+  @Override
   public NetClient setReconnectInterval(long interval) {
+    checkConfigurable();
     if (interval < 1) {
       throw new IllegalArgumentException("reconnect interval nust be >= 1");
     }
@@ -114,196 +111,244 @@ public class DefaultNetClient implements NetClient {
     return this;
   }
 
+  @Override
   public long getReconnectInterval() {
     return reconnectInterval;
   }
 
-  public void exceptionHandler(Handler<Exception> handler) {
-    this.exceptionHandler = handler;
-  }
-
-  public Boolean isTCPNoDelay() {
+  @Override
+  public boolean isTCPNoDelay() {
     return tcpHelper.isTCPNoDelay();
   }
 
-  public Integer getSendBufferSize() {
+  @Override
+  public int getSendBufferSize() {
     return tcpHelper.getSendBufferSize();
   }
 
-  public Integer getReceiveBufferSize() {
+  @Override
+  public int getReceiveBufferSize() {
     return tcpHelper.getReceiveBufferSize();
   }
 
-  public Boolean isTCPKeepAlive() {
+  @Override
+  public boolean isTCPKeepAlive() {
     return tcpHelper.isTCPKeepAlive();
   }
 
-  public Boolean isReuseAddress() {
+  @Override
+  public boolean isReuseAddress() {
     return tcpHelper.isReuseAddress();
   }
 
-  public Boolean isSoLinger() {
-    return tcpHelper.isSoLinger();
+  @Override
+  public int getSoLinger() {
+    return tcpHelper.getSoLinger();
   }
 
-  public Integer getTrafficClass() {
+  @Override
+  public int getTrafficClass() {
     return tcpHelper.getTrafficClass();
   }
 
-  public Long getConnectTimeout() {
+  @Override
+  public int getConnectTimeout() {
     return tcpHelper.getConnectTimeout();
   }
 
+  @Override
   public NetClient setTCPNoDelay(boolean tcpNoDelay) {
+    checkConfigurable();
     tcpHelper.setTCPNoDelay(tcpNoDelay);
     return this;
   }
 
+  @Override
   public NetClient setSendBufferSize(int size) {
+    checkConfigurable();
     tcpHelper.setSendBufferSize(size);
     return this;
   }
 
+  @Override
   public NetClient setReceiveBufferSize(int size) {
+    checkConfigurable();
     tcpHelper.setReceiveBufferSize(size);
     return this;
   }
 
+  @Override
   public NetClient setTCPKeepAlive(boolean keepAlive) {
+    checkConfigurable();
     tcpHelper.setTCPKeepAlive(keepAlive);
     return this;
   }
 
+  @Override
   public NetClient setReuseAddress(boolean reuse) {
+    checkConfigurable();
     tcpHelper.setReuseAddress(reuse);
     return this;
   }
 
-  public NetClient setSoLinger(boolean linger) {
+  @Override
+  public NetClient setSoLinger(int linger) {
+    checkConfigurable();
     tcpHelper.setSoLinger(linger);
     return this;
   }
 
+  @Override
   public NetClient setTrafficClass(int trafficClass) {
+    checkConfigurable();
     tcpHelper.setTrafficClass(trafficClass);
     return this;
   }
 
-  public NetClient setConnectTimeout(long timeout) {
+  @Override
+  public NetClient setConnectTimeout(int timeout) {
+    checkConfigurable();
     tcpHelper.setConnectTimeout(timeout);
     return this;
   }
 
+  @Override
   public boolean isSSL() {
     return tcpHelper.isSSL();
   }
 
+  @Override
   public String getKeyStorePath() {
     return tcpHelper.getKeyStorePath();
   }
 
+  @Override
   public String getKeyStorePassword() {
     return tcpHelper.getKeyStorePassword();
   }
 
+  @Override
   public String getTrustStorePath() {
     return tcpHelper.getTrustStorePath();
   }
 
+  @Override
   public String getTrustStorePassword() {
     return tcpHelper.getTrustStorePassword();
   }
 
-  public TCPSSLHelper.ClientAuth getClientAuth() {
-    return tcpHelper.getClientAuth();
-  }
-
-  public SSLContext getSSLContext() {
-    return tcpHelper.getSSLContext();
-  }
-
+  @Override
   public boolean isTrustAll() {
     return tcpHelper.isTrustAll();
   }
 
+  @Override
   public NetClient setSSL(boolean ssl) {
+    checkConfigurable();
     tcpHelper.setSSL(ssl);
     return this;
   }
 
+  @Override
   public NetClient setKeyStorePath(String path) {
+    checkConfigurable();
     tcpHelper.setKeyStorePath(path);
     return this;
   }
 
+  @Override
   public NetClient setKeyStorePassword(String pwd) {
+    checkConfigurable();
     tcpHelper.setKeyStorePassword(pwd);
     return this;
   }
 
+  @Override
   public NetClient setTrustStorePath(String path) {
+    checkConfigurable();
     tcpHelper.setTrustStorePath(path);
     return this;
   }
 
+  @Override
   public NetClient setTrustStorePassword(String pwd) {
+    checkConfigurable();
     tcpHelper.setTrustStorePassword(pwd);
     return this;
   }
 
+  @Override
   public NetClient setTrustAll(boolean trustAll) {
+    checkConfigurable();
     tcpHelper.setTrustAll(trustAll);
     return this;
   }
 
-  private void connect(final int port, final String host, final Handler<NetSocket> connectHandler,
+  @Override
+  public NetClient setUsePooledBuffers(boolean pooledBuffers) {
+    checkConfigurable();
+    tcpHelper.setUsePooledBuffers(pooledBuffers);
+    return this;
+  }
+
+  @Override
+  public boolean isUsePooledBuffers() {
+    return tcpHelper.isUsePooledBuffers();
+  }
+
+  private void checkConfigurable() {
+    if (!configurable) {
+      throw new IllegalStateException("Can't set property after connect has been called");
+    }
+  }
+
+  private void connect(final int port, final String host, final Handler<AsyncResult<NetSocket>> connectHandler,
                        final int remainingAttempts) {
     if (bootstrap == null) {
-      // Share the event loop thread to also serve the NetClient's network traffic.
-      VertxWorkerPool pool = new VertxWorkerPool();
-      pool.addWorker(eventLoopContext.getWorker());
-
-      NioClientSocketChannelFactory channelFactory = new NioClientSocketChannelFactory(
-          vertx.getClientAcceptorPool(), pool);
-      bootstrap = new ClientBootstrap(channelFactory);
-
       tcpHelper.checkSSL(vertx);
 
-      bootstrap.setPipelineFactory(new ChannelPipelineFactory() {
-        public ChannelPipeline getPipeline() throws Exception {
-          ChannelPipeline pipeline = Channels.pipeline();
+      bootstrap = new Bootstrap();
+      bootstrap.group(actualCtx.getEventLoop());
+      bootstrap.channel(NioSocketChannel.class);
+      bootstrap.handler(new ChannelInitializer<Channel>() {
+        @Override
+        protected void initChannel(Channel ch) throws Exception {
+          ChannelPipeline pipeline = ch.pipeline();
+          pipeline.addLast("exceptionDispatcher", EXCEPTION_DISPATCH_HANDLER);
+          pipeline.addLast("flowControl", new FlowControlHandler());
+
           if (tcpHelper.isSSL()) {
             SSLEngine engine = tcpHelper.getSSLContext().createSSLEngine();
             engine.setUseClientMode(true); //We are on the client side of the connection
             pipeline.addLast("ssl", new SslHandler(engine));
           }
           pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());  // For large file / sendfile support
-          pipeline.addLast("handler", new ClientHandler());
-          return pipeline;
+          pipeline.addLast("handler", new VertxNetHandler(vertx, socketMap));
         }
       });
+      configurable = false;
     }
-    bootstrap.setOptions(tcpHelper.generateConnectionOptions(false));
+    tcpHelper.applyConnectionOptions(bootstrap);
     ChannelFuture future = bootstrap.connect(new InetSocketAddress(host, port));
     future.addListener(new ChannelFutureListener() {
       public void operationComplete(ChannelFuture channelFuture) throws Exception {
-        final NioSocketChannel ch = (NioSocketChannel) channelFuture.getChannel();
+        final Channel ch = channelFuture.channel();
 
         if (channelFuture.isSuccess()) {
 
           if (tcpHelper.isSSL()) {
             // TCP connected, so now we must do the SSL handshake
 
-            SslHandler sslHandler = (SslHandler)ch.getPipeline().get("ssl");
+            SslHandler sslHandler = ch.pipeline().get(SslHandler.class);
 
-            ChannelFuture fut = sslHandler.handshake();
-            fut.addListener(new ChannelFutureListener() {
-
-              public void operationComplete(ChannelFuture channelFuture) throws Exception {
-                if (channelFuture.isSuccess()) {
+            Future<Channel> fut = sslHandler.handshakeFuture();
+            fut.addListener(new GenericFutureListener<Future<Channel>>() {
+              @Override
+              public void operationComplete(Future<Channel> future) throws Exception {
+                if (future.isSuccess()) {
                   connected(ch, connectHandler);
                 } else {
-                  failed(ch, new SSLHandshakeException("Failed to create SSL connection"));
+                  failed(ch, future.cause(), connectHandler);
                 }
               }
             });
@@ -312,7 +357,7 @@ public class DefaultNetClient implements NetClient {
           }
         } else {
           if (remainingAttempts > 0 || remainingAttempts == -1) {
-            actualCtx.execute(new Runnable() {
+            actualCtx.execute(ch.eventLoop(), new Runnable() {
               public void run() {
                 log.debug("Failed to create connection. Will retry in " + reconnectInterval + " milliseconds");
                 //Set a timer to retry connection
@@ -325,105 +370,38 @@ public class DefaultNetClient implements NetClient {
               }
             });
           } else {
-            failed(ch, channelFuture.getCause());
+            failed(ch, channelFuture.cause(), connectHandler);
           }
         }
       }
     });
   }
 
-  private void connected(final NioSocketChannel ch, final Handler<NetSocket> connectHandler) {
-    actualCtx.execute(new Runnable() {
+  private void connected(final Channel ch, final Handler<AsyncResult<NetSocket>> connectHandler) {
+    actualCtx.execute(ch.eventLoop(), new Runnable() {
       public void run() {
-        DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, actualCtx);
-        socketMap.put(ch, sock);
-        connectHandler.handle(sock);
+        doConnected(ch, connectHandler);
       }
     });
   }
 
-  private void failed(NioSocketChannel ch, final Throwable t) {
-  	ch.close();
-    if (t instanceof Exception && exceptionHandler != null) {
-      actualCtx.execute(new Runnable() {
-        public void run() {
-          exceptionHandler.handle((Exception) t);
-        }
-      });
-    } else {
-      log.error("Unhandled exception", t);
-    }
+  private void doConnected(Channel ch, final Handler<AsyncResult<NetSocket>> connectHandler) {
+    DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, actualCtx);
+    socketMap.put(ch, sock);
+    connectHandler.handle(new DefaultFutureResult<NetSocket>(sock));
   }
 
-  private class ClientHandler extends SimpleChannelUpstreamHandler {
-
-    @Override
-    public void channelConnected(ChannelHandlerContext ctx, ChannelStateEvent e) {
-    }
-
-    @Override
-    public void channelClosed(ChannelHandlerContext chctx, ChannelStateEvent e) {
-      final NioSocketChannel ch = (NioSocketChannel) e.getChannel();
-      final DefaultNetSocket sock = socketMap.remove(ch);
-      if (sock != null) {
-        sock.getContext().execute(new Runnable() {
-          public void run() {
-            sock.handleClosed();
-          }
-        });
+  private void failed(Channel ch, final Throwable t, final Handler<AsyncResult<NetSocket>> connectHandler) {
+    ch.close();
+    actualCtx.execute(ch.eventLoop(), new Runnable() {
+      public void run() {
+        doFailed(connectHandler, t);
       }
-    }
-
-    @Override
-    public void messageReceived(ChannelHandlerContext chctx, MessageEvent e) {
-      final DefaultNetSocket sock = socketMap.get(chctx.getChannel());
-      if (sock != null) {
-        final ChannelBuffer cb = (ChannelBuffer) e.getMessage();
-        NioSocketChannel ch = (NioSocketChannel) e.getChannel();
-        // We need to do this since it's possible the server is being used from a worker context
-        if (actualCtx.isOnCorrectWorker(ch.getWorker())) {
-          sock.handleDataReceived(new Buffer(cb));
-        } else {
-          actualCtx.execute(new Runnable() {
-            public void run() {
-              sock.handleDataReceived(new Buffer(cb));
-            }
-          });
-        }
-      }
-    }
-
-    @Override
-    public void channelInterestChanged(ChannelHandlerContext chctx, ChannelStateEvent e) throws Exception {
-      final NioSocketChannel ch = (NioSocketChannel) e.getChannel();
-      final DefaultNetSocket sock = socketMap.get(ch);
-      ChannelState state = e.getState();
-      if (state == ChannelState.INTEREST_OPS) {
-        actualCtx.execute(new Runnable() {
-          public void run() {
-            sock.handleInterestedOpsChanged();
-          }
-        });
-      }
-    }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext chctx, ExceptionEvent e) {
-      final NioSocketChannel ch = (NioSocketChannel) e.getChannel();
-      final NetSocket sock = socketMap.remove(ch);
-      final Throwable t = e.getCause();
-      if (sock != null && t instanceof Exception) {
-        actualCtx.execute(new Runnable() {
-          public void run() {
-            sock.handleException((Exception) t);
-            ch.close();
-          }
-        });
-      } else {
-        // Ignore - any exceptions before a channel exists will be passed manually via the failed(...) method
-      }
-    }
+    });
   }
 
+  private static void doFailed(Handler<AsyncResult<NetSocket>> connectHandler, Throwable t) {
+    connectHandler.handle(new DefaultFutureResult<NetSocket>(t));
+  }
 }
 

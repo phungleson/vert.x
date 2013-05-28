@@ -16,7 +16,9 @@
 
 package vertx.tests.core.eventbus;
 
-import org.vertx.java.core.SimpleHandler;
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
+import org.vertx.java.core.Future;
 import org.vertx.java.core.eventbus.impl.ClusterManager;
 import org.vertx.java.core.eventbus.impl.DefaultEventBus;
 import org.vertx.java.core.eventbus.impl.hazelcast.HazelcastClusterManager;
@@ -24,7 +26,6 @@ import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.testframework.TestClientBase;
-import org.vertx.java.tests.core.eventbus.Counter;
 
 import java.util.Map;
 
@@ -39,29 +40,37 @@ public abstract class EventBusAppBase extends TestClientBase {
   protected DefaultEventBus eb;
 
   @Override
-  public void start() {
+  public void start(final Future<Void> startedResult) {
     super.start();
-
     data = vertx.sharedData().getMap("data");
-
     if (isLocal()) {
       eb = (DefaultEventBus)vertx.eventBus();
+      tu.appReady();
+      startedResult.setResult(null);
     } else {
-      int port = Counter.portCounter.getAndIncrement();
       // FIXME - this test is a hack - we shouldn't be creating multiple eventbuses with a single vert.x
       // using private API!!
-      ClusterManager clusterManager = new HazelcastClusterManager((VertxInternal)vertx);
-      eb = new DefaultEventBus((VertxInternal)vertx, port, "localhost", clusterManager);
+      VertxInternal vertxi = ((VertxInternal)vertx);
+      ClusterManager clusterManager = new HazelcastClusterManager(vertxi);
+      eb = new DefaultEventBus(vertxi, 0, "localhost", clusterManager, new AsyncResultHandler<Void>() {
+        @Override
+        public void handle(AsyncResult<Void> asyncResult) {
+          if (asyncResult.succeeded()) {
+            tu.appReady();
+            startedResult.setResult(null);
+          } else {
+            startedResult.setFailure(asyncResult.cause());
+          }
+        }
+      });
     }
-
-    tu.appReady();
   }
 
   @Override
   public void stop() {
     if (!isLocal()) {
-      eb.close(new SimpleHandler() {
-        public void handle() {
+      eb.close(new AsyncResultHandler<Void>() {
+        public void handle(AsyncResult<Void> result) {
           EventBusAppBase.super.stop();
         }
       });

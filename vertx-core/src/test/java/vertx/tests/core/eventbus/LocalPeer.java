@@ -18,6 +18,7 @@ package vertx.tests.core.eventbus;
 
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.AsyncResultHandler;
+import org.vertx.java.core.Future;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
@@ -32,8 +33,8 @@ import java.util.UUID;
 public class LocalPeer extends EventBusAppBase {
 
   @Override
-  public void start() {
-    super.start();
+  public void start(final Future<Void> startedResult) {
+    super.start(startedResult);
   }
 
   @Override
@@ -50,7 +51,7 @@ public class LocalPeer extends EventBusAppBase {
     eb.registerHandler(address, new Handler<Message<Buffer>>() {
           public void handle(Message<Buffer> msg) {
             tu.checkThread();
-            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body));
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
             eb.unregisterHandler("some-address", this, new AsyncResultHandler<Void>() {
               public void handle(AsyncResult<Void> event) {
                 if (event.succeeded()) {
@@ -87,7 +88,7 @@ public class LocalPeer extends EventBusAppBase {
     eb.registerHandler(address, new Handler<Message<Buffer>>() {
           public void handle(Message<Buffer> msg) {
             tu.checkThread();
-            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body));
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
             eb.unregisterHandler(address, this, new AsyncResultHandler<Void>() {
               public void handle(AsyncResult<Void> event) {
                 if (event.succeeded()) {
@@ -119,7 +120,7 @@ public class LocalPeer extends EventBusAppBase {
           public void handle(Message<Buffer> msg) {
             tu.checkThread();
             tu.azzert(!handled);
-            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body));
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
             eb.unregisterHandler(address, this, new AsyncResultHandler<Void>() {
               public void handle(AsyncResult<Void> event) {
                 if (event.succeeded()) {
@@ -149,7 +150,7 @@ public class LocalPeer extends EventBusAppBase {
           int count;
           public void handle(Message<Buffer> msg) {
             tu.checkThread();
-            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body));
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
             count++;
             if (count == 2) {
               final Handler<Message<Buffer>> hndlr = this;
@@ -195,7 +196,7 @@ public class LocalPeer extends EventBusAppBase {
           public void handle(Message<Buffer> msg) {
             tu.checkThread();
             tu.azzert(!handled);
-            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body));
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
             eb.unregisterHandler(address, this);
             handled = true;
             msg.reply(new Buffer("reply" + address));
@@ -210,6 +211,37 @@ public class LocalPeer extends EventBusAppBase {
       }
     }
     );
+  }
+
+  public void testReplyDifferentTypeInitialise() {
+    final String address = UUID.randomUUID().toString();
+    Set<String> addresses = vertx.sharedData().getSet("addresses");
+    addresses.add(address);
+    eb.registerHandler(address, new Handler<Message<Buffer>>() {
+          boolean handled = false;
+
+          public void handle(Message<Buffer> msg) {
+            tu.checkThread();
+            tu.azzert(!handled);
+            tu.azzert(TestUtils.buffersEqual((Buffer) data.get("buffer"), msg.body()));
+            eb.unregisterHandler(address, this);
+            handled = true;
+            msg.reply("reply" + address);
+          }
+        }, new AsyncResultHandler<Void>() {
+          public void handle(AsyncResult<Void> event) {
+            if (event.succeeded()) {
+              tu.testComplete();
+            } else {
+              tu.azzert(false, "Failed to register");
+            }
+          }
+        }
+    );
+  }
+
+  public void testReplyUntypedHandlerInitialise() {
+    testReplyDifferentTypeInitialise();
   }
 
 

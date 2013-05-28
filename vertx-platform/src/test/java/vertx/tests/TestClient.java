@@ -16,9 +16,12 @@
 
 package vertx.tests;
 
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.testframework.TestClientBase;
 
 /**
@@ -40,46 +43,61 @@ public class TestClient extends TestClientBase {
     super.stop();
   }
 
+  public void testDeployWithConfig() {
+    JsonObject conf = new JsonObject().putString("animals", "armadillos");
+    container.deployVerticle(ConfigVerticle.class.getName(), conf, new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        if (res.failed()) {
+          res.cause().printStackTrace();
+        }
+        tu.azzert(res.succeeded());
+        tu.azzert(res.result() != null);
+        tu.checkThread();
+      }
+    });
+  }
+
   public void testDeployVerticle() {
-    final Thread t = Thread.currentThread();
     eb.registerHandler("test-handler", new Handler<Message<String>>() {
       public void handle(Message<String> message) {
-        tu.azzert(Thread.currentThread() == t);
-        if ("started".equals(message.body)) {
+        tu.checkThread();
+        if ("started".equals(message.body())) {
           eb.unregisterHandler("test-handler", this);
           tu.testComplete();
         }
       }
     });
 
-    container.deployVerticle(ChildVerticle.class.getName(), null, 1, new Handler<String>() {
-      public void handle(String deployID) {
-        tu.azzert(Thread.currentThread() == t);
-        tu.azzert(deployID != null);
+    container.deployVerticle(ChildVerticle.class.getName(), null, 1, new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        tu.azzert(res.succeeded());
+        tu.azzert(res.result() != null);
+        tu.checkThread();
       }
     });
   }
 
   public void testUndeployVerticle() {
-    final Thread t = Thread.currentThread();
     container.deployVerticle(ChildVerticle.class.getName(), null, 1,
-      new Handler<String>() {
-        public void handle(final String deploymentID) {
-          tu.azzert(Thread.currentThread() == t);
+      new AsyncResultHandler<String>() {
+        public void handle(final AsyncResult<String> res) {
+          tu.azzert(res.succeeded());
+          tu.azzert(res.result() != null);
+          tu.checkThread();
           // Give it at least a second - especially for CI on Amazon
           vertx.setTimer(1000, new Handler<Long>() {
             public void handle(Long tid) {
               eb.registerHandler("test-handler", new Handler<Message<String>>() {
                 public void handle(Message<String> message) {
-                  if ("stopped".equals(message.body)) {
+                  if ("stopped".equals(message.body())) {
                     eb.unregisterHandler("test-handler", this);
                     tu.testComplete();
                   }
                 }
               });
-              container.undeployVerticle(deploymentID, new Handler<Void>() {
-                public void handle(Void v) {
-                  tu.azzert(Thread.currentThread() == t);
+              container.undeployVerticle(res.result(), new Handler<AsyncResult<Void>>() {
+                public void handle(AsyncResult<Void> res2) {
+                  tu.checkThread();
                 }
               });
             }
@@ -89,44 +107,47 @@ public class TestClient extends TestClientBase {
   }
 
   public void testDeployModule() {
-    final Thread t = Thread.currentThread();
     eb.registerHandler("test-handler", new Handler<Message<String>>() {
       public void handle(Message<String> message) {
-        tu.azzert(Thread.currentThread() == t);
-        if ("started".equals(message.body)) {
+        tu.checkThread();
+        if ("started".equals(message.body())) {
           eb.unregisterHandler("test-handler", this);
           tu.testComplete();
         }
       }
     });
 
-    container.deployModule("testmod-deploy1", null, 1, new Handler<String>() {
-      public void handle(String deployID) {
-        tu.azzert(Thread.currentThread() == t);
-        tu.azzert(deployID != null);
+    container.deployModule("io.vertx~testmod-deploy1~1.0", null, 1, new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        tu.azzert(res.succeeded());
+        tu.azzert(res.result() != null);
+        tu.checkThread();
       }
     });
   }
 
   public void testUndeployModule() {
     final Thread t = Thread.currentThread();
-    container.deployModule("testmod-deploy1", null, 1,
-        new Handler<String>() {
-          public void handle(final String deploymentID) {
+    container.deployModule("io.vertx~testmod-deploy1~1.0", null, 1,
+        new AsyncResultHandler<String>() {
+          public void handle(final AsyncResult<String> res) {
+            tu.azzert(res.succeeded());
+            tu.azzert(res.result() != null);
             tu.azzert(Thread.currentThread() == t);
             // Give it at least a second - especially for CI on Amazon
             vertx.setTimer(1000, new Handler<Long>() {
               public void handle(Long tid) {
                 eb.registerHandler("test-handler", new Handler<Message<String>>() {
                   public void handle(Message<String> message) {
-                    if ("stopped".equals(message.body)) {
+                    if ("stopped".equals(message.body())) {
                       eb.unregisterHandler("test-handler", this);
                       tu.testComplete();
                     }
                   }
                 });
-                container.undeployModule(deploymentID, new Handler<Void>() {
-                  public void handle(Void v) {
+                container.undeployModule(res.result(), new Handler<AsyncResult<Void>>() {
+                  public void handle(AsyncResult<Void> res) {
+                    tu.azzert(res.succeeded());
                     tu.azzert(Thread.currentThread() == t);
                   }
                 });
@@ -137,21 +158,21 @@ public class TestClient extends TestClientBase {
   }
 
   public void testDeployNestedModule() {
-    final Thread t = Thread.currentThread();
     eb.registerHandler("test-handler", new Handler<Message<String>>() {
       public void handle(Message<String> message) {
-        tu.azzert(Thread.currentThread() == t);
-        if ("started".equals(message.body)) {
+        tu.checkThread();
+        if ("started".equals(message.body())) {
           eb.unregisterHandler("test-handler", this);
           tu.testComplete();
         }
       }
     });
 
-    container.deployModule("testmod-deploy2", null, 1, new Handler<String>() {
-      public void handle(String deployID) {
-        tu.azzert(Thread.currentThread() == t);
-        tu.azzert(deployID != null);
+    container.deployModule("io.vertx~testmod-deploy2~1.0", null, 1, new AsyncResultHandler<String>() {
+      public void handle(AsyncResult<String> res) {
+        tu.azzert(res.succeeded());
+        tu.azzert(res.result() != null);
+        tu.checkThread();
       }
     });
   }

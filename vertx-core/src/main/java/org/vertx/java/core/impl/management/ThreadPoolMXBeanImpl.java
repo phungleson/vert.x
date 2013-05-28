@@ -23,15 +23,11 @@ import java.util.concurrent.ThreadPoolExecutor;
  */
 public class ThreadPoolMXBeanImpl implements ThreadPoolMXBean {
 
-  private ThreadPoolExecutor executor;
+  private final ThreadPoolExecutor executor;
 
-  /**
-   * @param exec
-   */
   public ThreadPoolMXBeanImpl(ThreadPoolExecutor executor) {
     this.executor = executor;
   }
-
 
   /* (non-Javadoc)
    * @see org.vertx.java.core.impl.management.ThreadPoolMXBean#isShutdown()
@@ -128,6 +124,4 @@ public class ThreadPoolMXBeanImpl implements ThreadPoolMXBean {
   public long getCompletedTaskCount() {
     return executor.getCompletedTaskCount();
   }
-
-
 }

@@ -17,9 +17,13 @@ package org.vertx.java.tests;/*
  */
 
 import org.junit.Test;
+import org.vertx.java.core.AsyncResult;
+import org.vertx.java.core.Handler;
 import org.vertx.java.testframework.TestBase;
 
 import java.io.File;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class PullInDepsTest extends TestBase {
 
@@ -31,21 +35,38 @@ public class PullInDepsTest extends TestBase {
   @Override
   protected void tearDown() throws Exception {
     super.tearDown();
+    vertx.fileSystem().deleteSync("src/test/mod-test/io.vertx~mod-pullin~1.0/mods", true);
   }
 
   @Test
   public void testPullInDeps() throws Exception {
-    String deployID = startMod("mod-maven-server", null, 1, false);
-    assertTrue(platformManager.pullInDependencies("mod-pullin"));
-    stopApp(deployID, false);
-    assertFileExists("src/test/mod-test/mod-pullin/mods");
-    assertFileExists("src/test/mod-test/mod-pullin/mods/maven:io.vertx:mod-pullin-a:2.0.0");
-    assertFileExists("src/test/mod-test/mod-pullin/mods/maven:io.vertx:mod-pullin-b:1.0.1");
-    assertFileExists("src/test/mod-test/mod-pullin/mods/maven:io.vertx:mod-pullin-c:0.1");
-    assertFileExists("src/test/mod-test/mod-pullin/mods/maven:io.vertx:mod-pullin-d:1.2-beta");
-    // Nested
-    assertFileExists("src/test/mod-test/mod-pullin/mods/maven:io.vertx:mod-pullin-d:1.2-beta/mods/maven:io.vertx:mod-pullin-e:2.2");
-    vertx.fileSystem().deleteSync("src/test/mod-test/mod-pullin/mods", true);
+    final String deployID = startMod("io.vertx~mod-maven-server~1.0", null, 1, false);
+    final CountDownLatch latch = new CountDownLatch(1);
+    platformManager.pullInDependencies("io.vertx~mod-pullin~1.0", new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        assertTrue(res.succeeded());
+        try {
+          stopApp(deployID, false);
+        } catch (Exception e) {
+          fail("caught exception");
+        }
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods");
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods/io.vertx~mod-pullin-a~2.0.0");
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods/io.vertx~mod-pullin-b~1.0.1");
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods/io.vertx~mod-pullin-c~0.1");
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods/io.vertx~mod-pullin-d~1.2-beta");
+        // Nested
+        assertFileExists("src/test/mod-test/io.vertx~mod-pullin~1.0/mods/io.vertx~mod-pullin-d~1.2-beta/mods/io.vertx~mod-pullin-e~2.2");
+        latch.countDown();
+      }
+    });
+    try {
+      if (!latch.await(20000, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out");
+      }
+    } catch (InterruptedException e) {
+    }
   }
 
   private void assertFileExists(String fileName) {

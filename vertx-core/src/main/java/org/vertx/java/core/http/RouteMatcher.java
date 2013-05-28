@@ -17,8 +17,6 @@
 package org.vertx.java.core.http;
 
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.logging.Logger;
-import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -43,22 +41,20 @@ import java.util.regex.Pattern;
  */
 public class RouteMatcher implements Handler<HttpServerRequest> {
 
-  private static final Logger log = LoggerFactory.getLogger(RouteMatcher.class);
-
-  private List<PatternBinding> getBindings = new ArrayList<>();
-  private List<PatternBinding> putBindings = new ArrayList<>();
-  private List<PatternBinding> postBindings = new ArrayList<>();
-  private List<PatternBinding> deleteBindings = new ArrayList<>();
-  private List<PatternBinding> optionsBindings = new ArrayList<>();
-  private List<PatternBinding> headBindings = new ArrayList<>();
-  private List<PatternBinding> traceBindings = new ArrayList<>();
-  private List<PatternBinding> connectBindings = new ArrayList<>();
-  private List<PatternBinding> patchBindings = new ArrayList<>();
+  private final List<PatternBinding> getBindings = new ArrayList<>();
+  private final List<PatternBinding> putBindings = new ArrayList<>();
+  private final List<PatternBinding> postBindings = new ArrayList<>();
+  private final List<PatternBinding> deleteBindings = new ArrayList<>();
+  private final List<PatternBinding> optionsBindings = new ArrayList<>();
+  private final List<PatternBinding> headBindings = new ArrayList<>();
+  private final List<PatternBinding> traceBindings = new ArrayList<>();
+  private final List<PatternBinding> connectBindings = new ArrayList<>();
+  private final List<PatternBinding> patchBindings = new ArrayList<>();
   private Handler<HttpServerRequest> noMatchHandler;
 
   @Override
   public void handle(HttpServerRequest request) {
-    switch (request.method) {
+    switch (request.method()) {
       case "GET":
         route(request, getBindings);
         break;
@@ -308,7 +304,6 @@ public class RouteMatcher implements Handler<HttpServerRequest> {
   /**
    * Specify a handler that will be called when no other handlers match.
    * If this handler is not specified default behaviour is to return a 404
-   * @param handler
    */
   public RouteMatcher noMatch(Handler<HttpServerRequest> handler) {
     noMatchHandler = handler;
@@ -316,9 +311,9 @@ public class RouteMatcher implements Handler<HttpServerRequest> {
   }
 
 
-  private void addPattern(String input, Handler<HttpServerRequest> handler, List<PatternBinding> bindings) {
+  private static void addPattern(String input, Handler<HttpServerRequest> handler, List<PatternBinding> bindings) {
     // We need to search for any :<token name> tokens in the String and replace them with named capture groups
-    Matcher m =  Pattern.compile(":([A-Za-z][A-Za-z0-9]*)").matcher(input);
+    Matcher m =  Pattern.compile(":([A-Za-z][A-Za-z0-9_]*)").matcher(input);
     StringBuffer sb = new StringBuffer();
     Set<String> groups = new HashSet<>();
     while (m.find()) {
@@ -335,14 +330,14 @@ public class RouteMatcher implements Handler<HttpServerRequest> {
     bindings.add(binding);
   }
 
-  private void addRegEx(String input, Handler<HttpServerRequest> handler, List<PatternBinding> bindings) {
+  private static void addRegEx(String input, Handler<HttpServerRequest> handler, List<PatternBinding> bindings) {
     PatternBinding binding = new PatternBinding(Pattern.compile(input), null, handler);
     bindings.add(binding);
   }
 
   private void route(HttpServerRequest request, List<PatternBinding> bindings) {
     for (PatternBinding binding: bindings) {
-      Matcher m = binding.pattern.matcher(request.path);
+      Matcher m = binding.pattern.matcher(request.path());
       if (m.matches()) {
         Map<String, String> params = new HashMap<>(m.groupCount());
         if (binding.paramNames != null) {
@@ -356,7 +351,7 @@ public class RouteMatcher implements Handler<HttpServerRequest> {
             params.put("param" + i, m.group(i + 1));
           }
         }
-        request.params().putAll(params);
+        request.params().set(params);
         binding.handler.handle(request);
         return;
       }
@@ -365,8 +360,8 @@ public class RouteMatcher implements Handler<HttpServerRequest> {
       noMatchHandler.handle(request);
     } else {
       // Default 404
-      request.response.statusCode = 404;
-      request.response.end();
+      request.response().setStatusCode(404);
+      request.response().end();
     }
   }
 
